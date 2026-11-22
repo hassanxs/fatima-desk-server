@@ -73,11 +73,10 @@ const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
 static CHANGE_ID_LAST: Lazy<TokioMutex<HashMap<String, Instant>>> = Lazy::new(Default::default);
 const CHANGE_ID_MIN_INTERVAL: Duration = Duration::from_secs(30);
 
-// Fatima Desk aliases: one "Set alias" per IP per 10 seconds; IDs assigned in
-// the Console wait here (old ID -> new ID) until the device applies them.
+// Fatima Desk aliases: one "Set alias" per IP per 10 seconds. IDs assigned in
+// the Console are kept in the database (fd_pending_id) until applied.
 static SET_ALIAS_LAST: Lazy<TokioMutex<HashMap<String, Instant>>> = Lazy::new(Default::default);
 const SET_ALIAS_MIN_INTERVAL: Duration = Duration::from_secs(10);
-static PENDING_ASSIGN: Lazy<TokioMutex<HashMap<String, String>>> = Lazy::new(Default::default);
 
 /// Same rule as the Fatima Desk client: an ID is exactly 9 digits, like the
 /// auto-generated ones, not starting with 0.
@@ -640,9 +639,11 @@ impl RendezvousServer {
         socket: &mut FramedSocket,
     ) -> ResultType<()> {
         let mut fd_alias = String::new();
+        let mut fd_assign_id = String::new();
         let (request_pk, ip_change) = if let Some(old) = self.pm.get_in_memory(&id).await {
             let mut old = old.write().await;
             fd_alias = old.alias.clone();
+            fd_assign_id = old.pending_id.clone();
             let ip = socket_addr.ip();
             let ip_change = if old.socket_addr.port() != 0 {
                 ip != old.socket_addr.ip()
@@ -670,7 +671,6 @@ impl RendezvousServer {
         if let Some(old) = ip_change {
             log::info!("IP change of {} from {} to {}", id, old, socket_addr);
         }
-        let fd_assign_id = PENDING_ASSIGN.lock().await.get(&id).cloned().unwrap_or_default();
         let mut msg_out = RendezvousMessage::new();
         msg_out.set_register_peer_response(RegisterPeerResponse {
             request_pk,
@@ -925,7 +925,13 @@ impl RendezvousServer {
         }
         let res = self.pm.change_id(&rk.old_id, &rk.id, &rk.uuid, &ip).await;
         if res == OK {
-            PENDING_ASSIGN.lock().await.remove(&rk.old_id);
+            if let Some(peer) = self.pm.get_in_memory(&rk.id).await {
+                if !peer.read().await.pending_id.is_empty() {
+                    if let Err(err) = self.pm.set_pending_id(&peer, "").await {
+                        log::error!("assign_id: clearing {} failed: {}", rk.id, err);
+                    }
+                }
+            }
         }
         res
     }
@@ -975,34 +981,39 @@ impl RendezvousServer {
     /// Fatima Desk admin command: give a device a new numeric ID ("-" cancels).
     /// The device applies it at its next registration with a normal Change ID.
     async fn admin_assign_id(&self, id: &str, new_id: &str) -> String {
-        let mut pending = PENDING_ASSIGN.lock().await;
-        if new_id == "-" {
-            pending.remove(id);
-            return "OK\n".to_owned();
-        }
-        if !is_valid_fatimadesk_id(new_id) {
+        if new_id != "-" && !is_valid_fatimadesk_id(new_id) {
             return "ERR the ID must be 9 digits, not starting with 0\n".to_owned();
-        }
-        if new_id == id {
-            pending.remove(id);
-            return "OK\n".to_owned();
         }
         let Some(peer) = self.pm.get(id).await else {
             return "ERR unknown device\n".to_owned();
         };
-        if peer.read().await.guid.is_empty() {
+        let guid = peer.read().await.guid.clone();
+        if guid.is_empty() {
             return "ERR unknown device\n".to_owned();
         }
-        if let Some(target) = self.pm.get(new_id).await {
-            if !target.read().await.uuid.is_empty() {
-                return "ERR ID in use\n".to_owned();
+        let new_id = if new_id == "-" || new_id == id { "" } else { new_id };
+        if !new_id.is_empty() {
+            if let Some(target) = self.pm.get(new_id).await {
+                if !target.read().await.uuid.is_empty() {
+                    return "ERR ID in use\n".to_owned();
+                }
+            }
+            match self.pm.db.pending_id_owner(new_id).await {
+                Ok(Some(owner)) if owner != guid => {
+                    return "ERR ID already assigned to another device\n".to_owned()
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    log::error!("assign_id: {}", err);
+                    return "ERR server error\n".to_owned();
+                }
             }
         }
-        if pending.iter().any(|(k, v)| v == new_id && k != id) {
-            return "ERR ID already assigned to another device\n".to_owned();
+        if let Err(err) = self.pm.set_pending_id(&peer, new_id).await {
+            log::error!("assign_id: {} -> {:?}: {}", id, new_id, err);
+            return "ERR server error\n".to_owned();
         }
-        pending.insert(id.to_owned(), new_id.to_owned());
-        log::info!("assign_id: {} -> {} (pending)", id, new_id);
+        log::info!("assign_id: {} -> {:?} (pending)", id, new_id);
         "OK\n".to_owned()
     }
 
@@ -1253,11 +1264,14 @@ impl RendezvousServer {
                 (Some(id), Some(new_id)) => res = self.admin_assign_id(id, new_id).await,
                 _ => res = "ERR usage: fd-assign <id> <new-id|->\n".to_owned(),
             },
-            Some("fd-pending") => {
-                for (id, new_id) in PENDING_ASSIGN.lock().await.iter() {
-                    let _ = writeln!(res, "{id} {new_id}");
+            Some("fd-pending") => match self.pm.db.list_pending_ids().await {
+                Ok(list) => {
+                    for (id, new_id) in list {
+                        let _ = writeln!(res, "{id} {new_id}");
+                    }
                 }
-            }
+                Err(err) => log::error!("fd-pending: {}", err),
+            },
             Some("always-use-relay" | "aur") => {
                 if let Some(rs) = fds.next() {
                     if rs.to_uppercase() == "Y" {

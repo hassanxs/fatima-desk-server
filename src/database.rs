@@ -164,6 +164,10 @@ impl Database {
             .bind(guid)
             .execute(self.pool.get().await?.deref_mut())
             .await?;
+        sqlx::query("delete from fd_pending_id where guid = ?")
+            .bind(guid)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
         Ok(())
     }
 
@@ -182,7 +186,63 @@ impl Database {
         sqlx::query("create unique index if not exists index_fd_alias_lower on fd_alias (lower(alias))")
             .execute(self.pool.get().await?.deref_mut())
             .await?;
+        // IDs assigned in the Console, waiting for the device to apply them.
+        sqlx::query(
+            "create table if not exists fd_pending_id (
+                guid blob primary key not null,
+                new_id varchar(100) not null unique
+            ) without rowid",
+        )
+        .execute(self.pool.get().await?.deref_mut())
+        .await?;
         Ok(())
+    }
+
+    pub async fn get_pending_id(&self, guid: &[u8]) -> ResultType<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as("select new_id from fd_pending_id where guid = ?")
+            .bind(guid)
+            .fetch_optional(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// guid of the device that `new_id` is already waiting for.
+    pub async fn pending_id_owner(&self, new_id: &str) -> ResultType<Option<Vec<u8>>> {
+        let row: Option<(Vec<u8>,)> = sqlx::query_as("select guid from fd_pending_id where new_id = ?")
+            .bind(new_id)
+            .fetch_optional(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    pub async fn set_pending_id(&self, guid: &[u8], new_id: &str) -> ResultType<()> {
+        sqlx::query(
+            "insert into fd_pending_id (guid, new_id) values (?, ?)
+             on conflict (guid) do update set new_id = excluded.new_id",
+        )
+        .bind(guid)
+        .bind(new_id)
+        .execute(self.pool.get().await?.deref_mut())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_pending_id(&self, guid: &[u8]) -> ResultType<()> {
+        sqlx::query("delete from fd_pending_id where guid = ?")
+            .bind(guid)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(())
+    }
+
+    /// (current ID, assigned ID) of every assignment not applied yet.
+    pub async fn list_pending_ids(&self) -> ResultType<Vec<(String, String)>> {
+        Ok(sqlx::query_as(
+            "select peer.id, fd_pending_id.new_id from fd_pending_id
+             join peer on peer.guid = fd_pending_id.guid order by peer.id",
+        )
+        .fetch_all(self.pool.get().await?.deref_mut())
+        .await?)
     }
 
     pub async fn get_alias(&self, guid: &[u8]) -> ResultType<Option<String>> {
@@ -267,6 +327,18 @@ mod fd_alias_tests {
         assert_eq!(db.resolve_alias("Office-PC").await.unwrap(), None);
         db.delete_alias(&a).await.unwrap();
         assert_eq!(db.resolve_alias("Home-PC").await.unwrap(), None);
+
+        // Pending assigned IDs survive in the database and follow the guid.
+        db.set_pending_id(&a, "750000001").await.unwrap();
+        assert_eq!(db.get_pending_id(&a).await.unwrap().as_deref(), Some("750000001"));
+        assert_eq!(db.pending_id_owner("750000001").await.unwrap(), Some(a.clone()));
+        assert!(db.set_pending_id(&b, "750000001").await.is_err());
+        assert_eq!(
+            db.list_pending_ids().await.unwrap(),
+            vec![("111222333".to_owned(), "750000001".to_owned())]
+        );
+        db.delete_pending_id(&a).await.unwrap();
+        assert!(db.list_pending_ids().await.unwrap().is_empty());
         drop(db);
         let _ = std::fs::remove_file(&path);
     }

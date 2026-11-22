@@ -40,6 +40,7 @@ pub(crate) struct Peer {
     // pub(crate) disabled: bool,
     pub(crate) reg_pk: (u32, Instant), // how often register_pk
     pub(crate) alias: String,          // Fatima Desk
+    pub(crate) pending_id: String,     // Fatima Desk: ID assigned in the Console
 }
 
 impl Default for Peer {
@@ -55,6 +56,7 @@ impl Default for Peer {
             // disabled: false,
             reg_pk: (0, get_expired_time()),
             alias: String::new(),
+            pending_id: String::new(),
         }
     }
 }
@@ -141,8 +143,10 @@ impl PeerMap {
             return p;
         } else if let Ok(Some(v)) = self.db.get_peer(id).await {
             let alias = self.db.get_alias(&v.guid).await.ok().flatten().unwrap_or_default();
+            let pending_id = self.db.get_pending_id(&v.guid).await.ok().flatten().unwrap_or_default();
             let peer = Peer {
                 alias,
+                pending_id,
                 guid: v.guid,
                 uuid: v.uuid.into(),
                 pk: v.pk.into(),
@@ -311,6 +315,19 @@ impl PeerMap {
         peer.write().await.alias = alias.to_owned();
         log::info!("set_alias: {} -> {:?}", id, alias);
         OK
+    }
+
+    /// Fatima Desk: remember (or, with an empty `new_id`, drop) the ID the
+    /// admin assigned to this device, in the database and in memory.
+    pub(crate) async fn set_pending_id(&self, peer: &LockPeer, new_id: &str) -> ResultType<()> {
+        let guid = peer.read().await.guid.clone();
+        if new_id.is_empty() {
+            self.db.delete_pending_id(&guid).await?;
+        } else {
+            self.db.set_pending_id(&guid, new_id).await?;
+        }
+        peer.write().await.pending_id = new_id.to_owned();
+        Ok(())
     }
 
     pub(crate) async fn resolve_alias(&self, alias: &str) -> String {
