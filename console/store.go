@@ -18,6 +18,7 @@ type Store struct {
 }
 
 type Device struct {
+	GUID      string // the server's permanent record id; survives "Change ID"
 	ID        string
 	FirstSeen string
 	IP        string
@@ -52,6 +53,9 @@ func OpenStore(consoleDB, peersDB string) (*Store, error) {
 		create table if not exists device_meta (
 			id text primary key, name text not null default '', note text not null default '',
 			hidden integer not null default 0, last_seen text not null default '');
+		create table if not exists device_meta_g (
+			guid text primary key, name text not null default '', note text not null default '',
+			hidden integer not null default 0, last_seen text not null default '');
 		create table if not exists conn_log (
 			id integer primary key, ts text not null, from_ip text not null,
 			to_id text not null, to_ip text not null);
@@ -72,8 +76,10 @@ func OpenStore(consoleDB, peersDB string) (*Store, error) {
 func now() string { return time.Now().UTC().Format("2006-01-02 15:04:05") }
 
 // Devices merges the server's peer table with the Console's own metadata.
+// Metadata is keyed by the server's guid, so it follows a device through
+// "Change ID". Older rows keyed by ID (device_meta) are migrated on sight.
 func (s *Store) Devices() ([]Device, error) {
-	rows, err := s.peers.Query(`select id, created_at, info from peer order by created_at`)
+	rows, err := s.peers.Query(`select hex(guid), id, created_at, info from peer order by created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("server db: %w", err)
 	}
@@ -82,7 +88,7 @@ func (s *Store) Devices() ([]Device, error) {
 	for rows.Next() {
 		var d Device
 		var created, info string
-		if err := rows.Scan(&d.ID, &created, &info); err != nil {
+		if err := rows.Scan(&d.GUID, &d.ID, &created, &info); err != nil {
 			return nil, err
 		}
 		d.FirstSeen = strings.Replace(strings.TrimSuffix(created, "Z"), "T", " ", 1)
@@ -96,44 +102,83 @@ func (s *Store) Devices() ([]Device, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	meta := map[string]Device{}
-	mrows, err := s.db.Query(`select id, name, note, hidden, last_seen from device_meta`)
+	byGUID, err := s.loadMeta(`select guid, name, note, hidden, last_seen from device_meta_g`)
 	if err != nil {
 		return nil, err
 	}
-	defer mrows.Close()
-	for mrows.Next() {
-		var m Device
-		if err := mrows.Scan(&m.ID, &m.Name, &m.Note, &m.Hidden, &m.LastSeen); err != nil {
-			return nil, err
-		}
-		meta[m.ID] = m
+	byID, err := s.loadMeta(`select id, name, note, hidden, last_seen from device_meta`)
+	if err != nil {
+		return nil, err
 	}
 	for i := range list {
-		if m, ok := meta[list[i].ID]; ok {
+		m, ok := byGUID[list[i].GUID]
+		if !ok {
+			if m, ok = byID[list[i].ID]; ok {
+				_, _ = s.db.Exec(`insert or ignore into device_meta_g(guid, name, note, hidden, last_seen) values(?,?,?,?,?)`,
+					list[i].GUID, m.Name, m.Note, m.Hidden, m.LastSeen)
+			}
+		}
+		if ok {
 			list[i].Name, list[i].Note, list[i].Hidden, list[i].LastSeen = m.Name, m.Note, m.Hidden, m.LastSeen
 		}
 	}
 	return list, nil
 }
 
+func (s *Store) loadMeta(q string) (map[string]Device, error) {
+	rows, err := s.db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := map[string]Device{}
+	for rows.Next() {
+		var key string
+		var d Device
+		if err := rows.Scan(&key, &d.Name, &d.Note, &d.Hidden, &d.LastSeen); err != nil {
+			return nil, err
+		}
+		m[key] = d
+	}
+	return m, rows.Err()
+}
+
+// guidFor finds the server's guid for a device ID.
+func (s *Store) guidFor(id string) (string, error) {
+	var g string
+	err := s.peers.QueryRow(`select hex(guid) from peer where id=?`, id).Scan(&g)
+	return g, err
+}
+
 func (s *Store) SetMeta(id, name, note string) error {
-	_, err := s.db.Exec(`insert into device_meta(id, name, note) values(?,?,?)
-		on conflict(id) do update set name=excluded.name, note=excluded.note`, id, name, note)
+	g, err := s.guidFor(id)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`insert into device_meta_g(guid, name, note) values(?,?,?)
+		on conflict(guid) do update set name=excluded.name, note=excluded.note`, g, name, note)
 	return err
 }
 
 func (s *Store) SetHidden(id string, hidden bool) error {
-	_, err := s.db.Exec(`insert into device_meta(id, hidden) values(?,?)
-		on conflict(id) do update set hidden=excluded.hidden`, id, hidden)
+	g, err := s.guidFor(id)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`insert into device_meta_g(guid, hidden) values(?,?)
+		on conflict(guid) do update set hidden=excluded.hidden`, g, hidden)
 	return err
 }
 
 func (s *Store) MarkSeen(ids []string) error {
 	ts := now()
 	for _, id := range ids {
-		if _, err := s.db.Exec(`insert into device_meta(id, last_seen) values(?,?)
-			on conflict(id) do update set last_seen=excluded.last_seen`, id, ts); err != nil {
+		g, err := s.guidFor(id)
+		if err != nil {
+			continue
+		}
+		if _, err := s.db.Exec(`insert into device_meta_g(guid, last_seen) values(?,?)
+			on conflict(guid) do update set last_seen=excluded.last_seen`, g, ts); err != nil {
 			return err
 		}
 	}

@@ -15,3 +15,5 @@ test.*
 console/build/
 console-data/
 .env
+deploy/server-image/hbbs
+deploy/server-image/hbbr
