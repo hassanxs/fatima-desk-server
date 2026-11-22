@@ -10,7 +10,7 @@
 {{if .OnlineErr}}<div class="flash err">Could not ask the ID server who is online: {{.OnlineErr}}</div>{{end}}
 
 <form class="toolbar" method="get" action="/">
-  <input type="search" name="q" value="{{.Q}}" placeholder="Search ID, name, note or IP">
+  <input type="search" name="q" value="{{.Q}}" placeholder="Search ID, alias, name, note or IP">
   {{if .ShowHidden}}<input type="hidden" name="hidden" value="1">{{end}}
   <button type="submit" class="ghost">Search</button>
   {{if .HiddenCount}}
@@ -22,12 +22,13 @@
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th></th><th>ID</th><th>Name</th><th>Note</th><th>Last IP</th><th>Last seen online</th><th>First seen</th><th></th></tr></thead>
+  <thead><tr><th></th><th>ID</th><th>Alias</th><th>Name</th><th>Note</th><th>Last IP</th><th>Last seen online</th><th>First seen</th><th></th></tr></thead>
   <tbody>
   {{range .Devices}}
     <tr class="{{if .Hidden}}muted{{end}}">
       <td><span class="dot {{if .Online}}on{{end}}" title="{{if .Online}}Online{{else}}Offline{{end}}"></span></td>
-      <td class="mono">{{spaced .ID}}</td>
+      <td class="mono">{{spaced .ID}}{{if .PendingID}}<br><span class="tag amber" title="Applied when the device next checks in">→ {{spaced .PendingID}} pending</span>{{end}}</td>
+      <td class="mono">{{if .Alias}}{{.Alias}}{{else}}<span class="dim">—</span>{{end}}</td>
       <td>{{if .Name}}{{.Name}}{{else}}<span class="dim">—</span>{{end}}</td>
       <td class="note">{{.Note}}</td>
       <td class="mono">{{.IP}}{{if .Blocked}} <span class="tag red">relay blocked</span>{{end}}</td>
@@ -44,12 +45,22 @@
     </tr>
     <tr id="edit-{{.ID}}" class="editrow" hidden>
       <td></td>
-      <td colspan="7">
+      <td colspan="8">
         <form method="post" action="/devices/{{.ID}}/meta" class="inline">
           <input type="hidden" name="csrf" value="{{$.CSRF}}">
           <label>Name <input name="name" value="{{.Name}}" maxlength="80" placeholder="e.g. Office PC"></label>
           <label class="grow">Note <input name="note" value="{{.Note}}" maxlength="300" placeholder="Anything useful about this device"></label>
           <button type="submit">Save</button>
+        </form>
+        <form method="post" action="/devices/{{.ID}}/alias" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <label>Alias <input name="alias" value="{{.Alias}}" maxlength="16" pattern="[A-Za-z][0-9A-Za-z_\-]{5,15}" placeholder="e.g. Office-PC" title="Starts with a letter, 6-16 letters, digits, _ or -. Leave empty to remove."></label>
+          <button type="submit" class="ghost">Save alias</button>
+        </form>
+        <form method="post" action="/devices/{{.ID}}/assign" class="inline" data-confirm="Change this device's ID? Saved connections to the old ID will stop working.">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <label>New ID <input name="new_id" value="{{.PendingID}}" maxlength="11" inputmode="numeric" pattern="[1-9][0-9 ]{8,10}" placeholder="9 digits" title="9 digits, not starting with 0. Leave empty to cancel a pending change."></label>
+          <button type="submit" class="ghost">Assign ID</button>
         </form>
         {{if .IP}}
         <form method="post" action="{{if .Blocked}}/unblock{{else}}/block{{end}}" class="inline" data-confirm="{{if .Blocked}}Allow relay connections from {{.IP}} again?{{else}}Block relay connections from {{.IP}}? Every device on that IP is affected.{{end}}">
@@ -62,10 +73,10 @@
       </td>
     </tr>
   {{else}}
-    <tr><td colspan="8" class="empty">No devices{{if .Q}} match “{{.Q}}”{{else}} have registered yet{{end}}.</td></tr>
+    <tr><td colspan="9" class="empty">No devices{{if .Q}} match “{{.Q}}”{{else}} have registered yet{{end}}.</td></tr>
   {{end}}
   </tbody>
 </table>
 </div>
-<p class="hint">Online status comes live from the ID server. “Last seen online” is recorded by this Console every 30 seconds, from when it was first started. Hiding a device only hides it here; it can still connect.</p>
+<p class="hint">Online status comes live from the ID server. “Last seen online” is recorded by this Console every 30 seconds, from when it was first started. Hiding a device only hides it here; it can still connect. Either the ID or the alias connects to a device. An assigned ID is applied by the device itself when it next checks in (within about a minute, if it is online); devices on Fatima Desk builds older than the alias update ignore it.</p>
 {{end}}

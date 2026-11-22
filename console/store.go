@@ -20,6 +20,8 @@ type Store struct {
 type Device struct {
 	GUID      string // the server's permanent record id; survives "Change ID"
 	ID        string
+	Alias     string // set on the device or here; kept by the server
+	PendingID string // numeric ID assigned here, applied at the next check-in
 	FirstSeen string
 	IP        string
 	Name      string
@@ -31,12 +33,12 @@ type Device struct {
 }
 
 type ConnRow struct {
-	Time     string
-	FromIP   string
-	FromIDs  []string
-	ToID     string
-	ToName   string
-	ToIP     string
+	Time    string
+	FromIP  string
+	FromIDs []string
+	ToID    string
+	ToName  string
+	ToIP    string
 }
 
 type AuditRow struct {
@@ -102,6 +104,10 @@ func (s *Store) Devices() ([]Device, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	aliases := s.aliases()
+	for i := range list {
+		list[i].Alias = aliases[list[i].GUID]
+	}
 	byGUID, err := s.loadMeta(`select guid, name, note, hidden, last_seen from device_meta_g`)
 	if err != nil {
 		return nil, err
@@ -123,6 +129,24 @@ func (s *Store) Devices() ([]Device, error) {
 		}
 	}
 	return list, nil
+}
+
+// aliases maps hex guid -> alias from the server's fd_alias table (missing on
+// a server older than aliases, which leaves the map empty).
+func (s *Store) aliases() map[string]string {
+	m := map[string]string{}
+	rows, err := s.peers.Query(`select hex(guid), alias from fd_alias`)
+	if err != nil {
+		return m
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var g, a string
+		if rows.Scan(&g, &a) == nil {
+			m[g] = a
+		}
+	}
+	return m
 }
 
 func (s *Store) loadMeta(q string) (map[string]Device, error) {

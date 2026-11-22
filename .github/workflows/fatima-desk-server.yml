@@ -32,8 +32,10 @@ jobs:
         with:
           tool: cross
 
-      - name: Test (Fatima Desk ID rules)
-        run: cargo test --release fatimadesk_id_tests
+      - name: Test (Fatima Desk ID and alias rules)
+        run: |
+          cargo test --release --lib fatimadesk_id_tests
+          cargo test --release --lib fd_alias_tests
 
       - name: Build hbbs and hbbr
         run: cross build --release --target x86_64-unknown-linux-musl --bin hbbs --bin hbbr

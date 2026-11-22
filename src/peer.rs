@@ -39,6 +39,7 @@ pub(crate) struct Peer {
     pub(crate) info: PeerInfo,
     // pub(crate) disabled: bool,
     pub(crate) reg_pk: (u32, Instant), // how often register_pk
+    pub(crate) alias: String,          // Fatima Desk
 }
 
 impl Default for Peer {
@@ -53,6 +54,7 @@ impl Default for Peer {
             // user: None,
             // disabled: false,
             reg_pk: (0, get_expired_time()),
+            alias: String::new(),
         }
     }
 }
@@ -138,7 +140,9 @@ impl PeerMap {
         if p.is_some() {
             return p;
         } else if let Ok(Some(v)) = self.db.get_peer(id).await {
+            let alias = self.db.get_alias(&v.guid).await.ok().flatten().unwrap_or_default();
             let peer = Peer {
+                alias,
                 guid: v.guid,
                 uuid: v.uuid.into(),
                 pk: v.pk.into(),
@@ -242,5 +246,74 @@ impl PeerMap {
         map.insert(new_id.to_owned(), peer);
         log::info!("change_id: {} -> {} (ip {})", old_id, new_id, ip);
         OK
+    }
+
+    /// Fatima Desk: the device's own "Set alias". Same ownership rule as
+    /// `change_id`: its UUID, from the IP it last registered from.
+    pub(crate) async fn set_alias_owned(
+        &self,
+        id: &str,
+        uuid: &[u8],
+        ip: &str,
+        alias: &str,
+    ) -> fd_set_alias_response::Result {
+        use fd_set_alias_response::Result::*;
+        let norm = |s: &str| s.trim_start_matches("::ffff:").to_owned();
+        let Some(peer) = self.get(id).await else {
+            return UUID_MISMATCH;
+        };
+        {
+            let p = peer.read().await;
+            if p.guid.is_empty() || p.uuid.as_ref() != uuid {
+                log::warn!("set_alias: {}: uuid mismatch", id);
+                return UUID_MISMATCH;
+            }
+            if !p.info.ip.is_empty() && norm(&p.info.ip) != norm(ip) {
+                log::warn!("set_alias: {}: request from {} but device is at {}", id, ip, p.info.ip);
+                return UUID_MISMATCH;
+            }
+        }
+        self.set_alias(id, &peer, alias).await
+    }
+
+    /// Fatima Desk: set (or, with an empty `alias`, remove) the alias of the
+    /// device `id`, without an ownership check (the Console's admin command).
+    pub(crate) async fn set_alias(
+        &self,
+        id: &str,
+        peer: &LockPeer,
+        alias: &str,
+    ) -> fd_set_alias_response::Result {
+        use fd_set_alias_response::Result::*;
+        let guid = peer.read().await.guid.clone();
+        if guid.is_empty() {
+            return UUID_MISMATCH;
+        }
+        if alias.is_empty() {
+            if let Err(err) = self.db.delete_alias(&guid).await {
+                log::error!("set_alias: {}: {}", id, err);
+                return SERVER_ERROR;
+            }
+        } else {
+            match self.db.alias_or_id_owner(alias).await {
+                Ok(Some(owner)) if owner != guid => return ALIAS_EXISTS,
+                Ok(_) => {}
+                Err(err) => {
+                    log::error!("set_alias: {}: {}", id, err);
+                    return SERVER_ERROR;
+                }
+            }
+            if let Err(err) = self.db.set_alias(&guid, alias).await {
+                log::error!("set_alias: {} -> {}: {}", id, alias, err);
+                return ALIAS_EXISTS;
+            }
+        }
+        peer.write().await.alias = alias.to_owned();
+        log::info!("set_alias: {} -> {:?}", id, alias);
+        OK
+    }
+
+    pub(crate) async fn resolve_alias(&self, alias: &str) -> String {
+        self.db.resolve_alias(alias).await.ok().flatten().unwrap_or_default()
     }
 }

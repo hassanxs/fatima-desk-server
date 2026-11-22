@@ -156,6 +156,55 @@ func (r *RDesk) Blocklist() ([]string, error) {
 func (r *RDesk) Block(ip string) error   { _, err := r.Hbbr("Ba " + ip); return err }
 func (r *RDesk) Unblock(ip string) error { _, err := r.Hbbr("Br " + ip); return err }
 
+// ---- aliases and assigned IDs (Fatima Desk hbbs commands) -------------------
+
+// fdCommand runs a Fatima Desk hbbs command, which answers "OK" or "ERR <why>".
+func (r *RDesk) fdCommand(cmd string) error {
+	out, err := r.Hbbs(cmd)
+	if err != nil {
+		return err
+	}
+	out = strings.TrimSpace(out)
+	if out == "OK" {
+		return nil
+	}
+	if msg, ok := strings.CutPrefix(out, "ERR "); ok {
+		return errors.New(msg)
+	}
+	return errors.New("the ID server does not support this yet")
+}
+
+// SetAlias sets a device's alias; an empty alias removes it.
+func (r *RDesk) SetAlias(id, alias string) error {
+	if alias == "" {
+		alias = "-"
+	}
+	return r.fdCommand("fd-alias " + id + " " + alias)
+}
+
+// AssignID gives a device a new numeric ID; an empty newID cancels.
+func (r *RDesk) AssignID(id, newID string) error {
+	if newID == "" {
+		newID = "-"
+	}
+	return r.fdCommand("fd-assign " + id + " " + newID)
+}
+
+// Pending lists assigned IDs the devices have not applied yet (old -> new).
+func (r *RDesk) Pending() map[string]string {
+	m := map[string]string{}
+	out, err := r.Hbbs("fd-pending")
+	if err != nil {
+		return m
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if f := strings.Fields(l); len(f) == 2 {
+			m[f[0]] = f[1]
+		}
+	}
+	return m
+}
+
 // ---- online status (OnlineRequest over the hbbs NAT port) ------------------
 
 func (r *RDesk) onlineHost() (string, error) {

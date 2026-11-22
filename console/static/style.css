@@ -76,6 +76,7 @@ td.empty { text-align: center; color: var(--dim); padding: 32px; }
 .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
 .tag.green { background: rgba(47,191,143,.15); color: var(--green); }
 .tag.red { background: rgba(229,72,77,.15); color: var(--red); }
+.tag.amber { background: rgba(245,166,35,.15); color: #f5a623; margin-top: 4px; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 20px; }
 .card .table-wrap { border: 0; background: transparent; margin: 0 -18px -18px; border-radius: 0; border-top: 1px solid var(--line); }

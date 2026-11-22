@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -153,6 +154,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /logout", a.auth(a.logout))
 	mux.HandleFunc("GET /{$}", a.auth(a.devicesPage))
 	mux.HandleFunc("POST /devices/{id}/meta", a.auth(a.deviceMeta))
+	mux.HandleFunc("POST /devices/{id}/alias", a.auth(a.deviceAlias))
+	mux.HandleFunc("POST /devices/{id}/assign", a.auth(a.deviceAssign))
 	mux.HandleFunc("POST /devices/{id}/hide", a.auth(a.deviceHide(true)))
 	mux.HandleFunc("POST /devices/{id}/unhide", a.auth(a.deviceHide(false)))
 	mux.HandleFunc("GET /connections", a.auth(a.connectionsPage))
@@ -316,7 +319,6 @@ func clientIP(r *http.Request) string {
 
 const cookieName = "fd_console"
 
-
 type handler func(w http.ResponseWriter, r *http.Request, sess session)
 
 func (a *App) auth(h handler) http.HandlerFunc {
@@ -474,6 +476,7 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 			blocked[ip] = true
 		}
 	}
+	pending := a.rd.Pending()
 	showHidden := r.URL.Query().Get("hidden") == "1"
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	var list []Device
@@ -482,6 +485,7 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 	for _, dv := range devs {
 		dv.Online = online[dv.ID]
 		dv.Blocked = blocked[dv.IP]
+		dv.PendingID = pending[dv.ID]
 		if dv.Online {
 			onlineCount++
 			seen = append(seen, dv.ID)
@@ -493,7 +497,7 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 				continue
 			}
 		}
-		if q != "" && !strings.Contains(strings.ToLower(dv.ID+" "+dv.Name+" "+dv.Note+" "+dv.IP), q) {
+		if q != "" && !strings.Contains(strings.ToLower(dv.ID+" "+dv.Alias+" "+dv.Name+" "+dv.Note+" "+dv.IP), q) {
 			continue
 		}
 		list = append(list, dv)
@@ -523,6 +527,58 @@ func (a *App) deviceMeta(w http.ResponseWriter, r *http.Request, _ session) {
 	}
 	a.store.Audit(clientIP(r), "device edited", fmt.Sprintf("%s name=%q note=%q", id, name, note))
 	http.Redirect(w, r, "/?ok=saved", http.StatusSeeOther)
+}
+
+var (
+	aliasRe     = regexp.MustCompile(`^[A-Za-z][0-9A-Za-z_-]{5,15}$`)
+	numericIDRe = regexp.MustCompile(`^[1-9][0-9]{8}$`)
+)
+
+func backWithErr(w http.ResponseWriter, r *http.Request, msg string) {
+	http.Redirect(w, r, "/?err="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+func (a *App) deviceAlias(w http.ResponseWriter, r *http.Request, _ session) {
+	id := r.PathValue("id")
+	if !idRe.MatchString(id) {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	alias := strings.TrimSpace(r.FormValue("alias"))
+	if alias != "" && !aliasRe.MatchString(alias) {
+		backWithErr(w, r, "An alias starts with a letter and has 6-16 letters, digits, _ or -")
+		return
+	}
+	if err := a.rd.SetAlias(id, alias); err != nil {
+		backWithErr(w, r, "Alias not saved: "+err.Error())
+		return
+	}
+	a.store.Audit(clientIP(r), "alias set", fmt.Sprintf("%s alias=%q", id, alias))
+	http.Redirect(w, r, "/?ok=Alias+saved", http.StatusSeeOther)
+}
+
+func (a *App) deviceAssign(w http.ResponseWriter, r *http.Request, _ session) {
+	id := r.PathValue("id")
+	if !idRe.MatchString(id) {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	newID := strings.ReplaceAll(strings.TrimSpace(r.FormValue("new_id")), " ", "")
+	if newID != "" && !numericIDRe.MatchString(newID) {
+		backWithErr(w, r, "The ID must be 9 digits, not starting with 0")
+		return
+	}
+	if err := a.rd.AssignID(id, newID); err != nil {
+		backWithErr(w, r, "ID not assigned: "+err.Error())
+		return
+	}
+	if newID == "" {
+		a.store.Audit(clientIP(r), "ID assignment cancelled", id)
+		http.Redirect(w, r, "/?ok=Assignment+cancelled", http.StatusSeeOther)
+		return
+	}
+	a.store.Audit(clientIP(r), "ID assigned", fmt.Sprintf("%s -> %s", id, newID))
+	http.Redirect(w, r, "/?ok="+url.QueryEscape("New ID "+newID+" will be applied when the device next checks in"), http.StatusSeeOther)
 }
 
 func (a *App) deviceHide(hide bool) handler {

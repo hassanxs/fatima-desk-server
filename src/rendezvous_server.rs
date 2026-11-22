@@ -73,25 +73,47 @@ const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
 static CHANGE_ID_LAST: Lazy<TokioMutex<HashMap<String, Instant>>> = Lazy::new(Default::default);
 const CHANGE_ID_MIN_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Same rule as the Fatima Desk client: a letter followed by 5-15 letters,
-/// digits, "_" or "-", or exactly 9 digits like the auto-generated IDs.
+// Fatima Desk aliases: one "Set alias" per IP per 10 seconds; IDs assigned in
+// the Console wait here (old ID -> new ID) until the device applies them.
+static SET_ALIAS_LAST: Lazy<TokioMutex<HashMap<String, Instant>>> = Lazy::new(Default::default);
+const SET_ALIAS_MIN_INTERVAL: Duration = Duration::from_secs(10);
+static PENDING_ASSIGN: Lazy<TokioMutex<HashMap<String, String>>> = Lazy::new(Default::default);
+
+/// Same rule as the Fatima Desk client: an ID is exactly 9 digits, like the
+/// auto-generated ones, not starting with 0.
 fn is_valid_fatimadesk_id(id: &str) -> bool {
-    static RE: Lazy<regex::Regex> =
-        Lazy::new(|| regex::Regex::new(r"^(?:[a-zA-Z][\w-]{5,15}|[0-9]{9})$").unwrap());
+    static RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^[1-9][0-9]{8}$").unwrap());
     RE.is_match(id)
+}
+
+/// An alias is a letter followed by 5-15 letters, digits, "_" or "-".
+fn is_valid_fatimadesk_alias(alias: &str) -> bool {
+    static RE: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r"^[a-zA-Z][\w-]{5,15}$").unwrap());
+    RE.is_match(alias)
 }
 
 #[cfg(test)]
 mod fatimadesk_id_tests {
-    use super::is_valid_fatimadesk_id;
+    use super::{is_valid_fatimadesk_alias, is_valid_fatimadesk_id};
 
     #[test]
     fn id_rules() {
-        for ok in ["Laptop-1", "Office_PC", "abcdef", "a23456789012345X", "123456789"] {
+        for ok in ["123456789", "100000001", "999999999"] {
             assert!(is_valid_fatimadesk_id(ok), "{ok} should be valid");
         }
-        for bad in ["12345", "abcde", "1abcdef", "12345678", "1234567890", "a b cdef", "a2345678901234567", "abc.def"] {
+        for bad in ["012345678", "12345678", "1234567890", "Laptop-1", "12345678a", ""] {
             assert!(!is_valid_fatimadesk_id(bad), "{bad} should be invalid");
+        }
+    }
+
+    #[test]
+    fn alias_rules() {
+        for ok in ["Laptop-1", "Office_PC", "abcdef", "a23456789012345X", "Home-Desktop-01"] {
+            assert!(is_valid_fatimadesk_alias(ok), "{ok} should be valid");
+        }
+        for bad in ["123456789", "abcde", "1abcdef", "a b cdef", "a2345678901234567", "abc.def", ""] {
+            assert!(!is_valid_fatimadesk_alias(bad), "{bad} should be invalid");
         }
     }
 }
@@ -581,6 +603,29 @@ impl RendezvousServer {
                     });
                     Self::send_to_sink(sink, msg_out).await;
                 }
+                Some(rendezvous_message::Union::FdAliasRequest(r)) => {
+                    let id = if is_valid_fatimadesk_alias(&r.alias) {
+                        self.pm.resolve_alias(&r.alias).await
+                    } else {
+                        String::new()
+                    };
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_fd_alias_response(FdAliasResponse {
+                        alias: r.alias,
+                        id,
+                        ..Default::default()
+                    });
+                    Self::send_to_sink(sink, msg_out).await;
+                }
+                Some(rendezvous_message::Union::FdSetAlias(r)) => {
+                    let res = self.handle_set_alias(r, addr).await;
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_fd_set_alias_response(FdSetAliasResponse {
+                        result: res.into(),
+                        ..Default::default()
+                    });
+                    Self::send_to_sink(sink, msg_out).await;
+                }
                 _ => {}
             }
         }
@@ -594,8 +639,10 @@ impl RendezvousServer {
         socket_addr: SocketAddr,
         socket: &mut FramedSocket,
     ) -> ResultType<()> {
+        let mut fd_alias = String::new();
         let (request_pk, ip_change) = if let Some(old) = self.pm.get_in_memory(&id).await {
             let mut old = old.write().await;
+            fd_alias = old.alias.clone();
             let ip = socket_addr.ip();
             let ip_change = if old.socket_addr.port() != 0 {
                 ip != old.socket_addr.ip()
@@ -623,9 +670,12 @@ impl RendezvousServer {
         if let Some(old) = ip_change {
             log::info!("IP change of {} from {} to {}", id, old, socket_addr);
         }
+        let fd_assign_id = PENDING_ASSIGN.lock().await.get(&id).cloned().unwrap_or_default();
         let mut msg_out = RendezvousMessage::new();
         msg_out.set_register_peer_response(RegisterPeerResponse {
             request_pk,
+            fd_alias,
+            fd_assign_id,
             ..Default::default()
         });
         socket.send(&msg_out, socket_addr).await
@@ -873,7 +923,87 @@ impl RendezvousServer {
             }
             last.insert(ip.clone(), Instant::now());
         }
-        self.pm.change_id(&rk.old_id, &rk.id, &rk.uuid, &ip).await
+        let res = self.pm.change_id(&rk.old_id, &rk.id, &rk.uuid, &ip).await;
+        if res == OK {
+            PENDING_ASSIGN.lock().await.remove(&rk.old_id);
+        }
+        res
+    }
+
+    /// Fatima Desk: the device's own "Set alias".
+    async fn handle_set_alias(
+        &mut self,
+        r: FdSetAlias,
+        addr: SocketAddr,
+    ) -> fd_set_alias_response::Result {
+        use fd_set_alias_response::Result::*;
+        if r.id.is_empty() || r.uuid.is_empty() {
+            return UUID_MISMATCH;
+        }
+        if !r.alias.is_empty() && !is_valid_fatimadesk_alias(&r.alias) {
+            return INVALID_FORMAT;
+        }
+        let ip = try_into_v4(addr).ip().to_string();
+        {
+            let mut last = SET_ALIAS_LAST.lock().await;
+            last.retain(|_, t| t.elapsed() < SET_ALIAS_MIN_INTERVAL);
+            if last.contains_key(&ip) {
+                return TOO_FREQUENT;
+            }
+            last.insert(ip.clone(), Instant::now());
+        }
+        self.pm.set_alias_owned(&r.id, &r.uuid, &ip, &r.alias).await
+    }
+
+    /// Fatima Desk admin command: set or remove ("-") a device's alias.
+    async fn admin_set_alias(&self, id: &str, alias: &str) -> String {
+        let alias = if alias == "-" { "" } else { alias };
+        if !alias.is_empty() && !is_valid_fatimadesk_alias(alias) {
+            return "ERR invalid alias\n".to_owned();
+        }
+        let Some(peer) = self.pm.get(id).await else {
+            return "ERR unknown device\n".to_owned();
+        };
+        match self.pm.set_alias(id, &peer, alias).await {
+            fd_set_alias_response::Result::OK => "OK\n".to_owned(),
+            fd_set_alias_response::Result::ALIAS_EXISTS => "ERR alias in use\n".to_owned(),
+            fd_set_alias_response::Result::UUID_MISMATCH => "ERR unknown device\n".to_owned(),
+            _ => "ERR server error\n".to_owned(),
+        }
+    }
+
+    /// Fatima Desk admin command: give a device a new numeric ID ("-" cancels).
+    /// The device applies it at its next registration with a normal Change ID.
+    async fn admin_assign_id(&self, id: &str, new_id: &str) -> String {
+        let mut pending = PENDING_ASSIGN.lock().await;
+        if new_id == "-" {
+            pending.remove(id);
+            return "OK\n".to_owned();
+        }
+        if !is_valid_fatimadesk_id(new_id) {
+            return "ERR the ID must be 9 digits, not starting with 0\n".to_owned();
+        }
+        if new_id == id {
+            pending.remove(id);
+            return "OK\n".to_owned();
+        }
+        let Some(peer) = self.pm.get(id).await else {
+            return "ERR unknown device\n".to_owned();
+        };
+        if peer.read().await.guid.is_empty() {
+            return "ERR unknown device\n".to_owned();
+        }
+        if let Some(target) = self.pm.get(new_id).await {
+            if !target.read().await.uuid.is_empty() {
+                return "ERR ID in use\n".to_owned();
+            }
+        }
+        if pending.iter().any(|(k, v)| v == new_id && k != id) {
+            return "ERR ID already assigned to another device\n".to_owned();
+        }
+        pending.insert(id.to_owned(), new_id.to_owned());
+        log::info!("assign_id: {} -> {} (pending)", id, new_id);
+        "OK\n".to_owned()
     }
 
     async fn send_to_sink(sink: &mut Option<Sink>, msg: RendezvousMessage) {
@@ -1112,6 +1242,20 @@ impl RendezvousServer {
                             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                         let _ = writeln!(res, "{} {} -> {}@{}", event_iso, e.from_ip, e.to_id, e.to_ip);
                     }
+                }
+            }
+            // Fatima Desk (used by the Console)
+            Some("fd-alias") => match (fds.next(), fds.next()) {
+                (Some(id), Some(alias)) => res = self.admin_set_alias(id, alias).await,
+                _ => res = "ERR usage: fd-alias <id> <alias|->\n".to_owned(),
+            },
+            Some("fd-assign") => match (fds.next(), fds.next()) {
+                (Some(id), Some(new_id)) => res = self.admin_assign_id(id, new_id).await,
+                _ => res = "ERR usage: fd-assign <id> <new-id|->\n".to_owned(),
+            },
+            Some("fd-pending") => {
+                for (id, new_id) in PENDING_ASSIGN.lock().await.iter() {
+                    let _ = writeln!(res, "{id} {new_id}");
                 }
             }
             Some("always-use-relay" | "aur") => {
