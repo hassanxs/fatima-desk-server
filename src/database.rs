@@ -142,6 +142,25 @@ impl Database {
         .await?;
         Ok(())
     }
+
+    // Fatima Desk (custom IDs). Runtime-checked queries, so the compile-time
+    // sqlx schema check is unchanged.
+    pub async fn rename_peer(&self, guid: &[u8], id: &str) -> ResultType<()> {
+        sqlx::query("update peer set id = ? where guid = ?")
+            .bind(id)
+            .bind(guid)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_peer(&self, guid: &[u8]) -> ResultType<()> {
+        sqlx::query("delete from peer where guid = ?")
+            .bind(guid)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

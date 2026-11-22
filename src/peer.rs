@@ -177,4 +177,70 @@ impl PeerMap {
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
     }
+
+    /// Fatima Desk: move a registered device from `old_id` to `new_id`
+    /// (the client's "Change ID"). Only the device that owns `old_id` may do
+    /// this: the request must carry its UUID and come from the IP it last
+    /// registered from. The device keeps its key, so its next registration
+    /// under `new_id` is accepted as the same device.
+    pub(crate) async fn change_id(
+        &self,
+        old_id: &str,
+        new_id: &str,
+        uuid: &[u8],
+        ip: &str,
+    ) -> register_pk_response::Result {
+        use register_pk_response::Result::*;
+        let norm = |s: &str| s.trim_start_matches("::ffff:").to_owned();
+
+        let Some(peer) = self.get(old_id).await else {
+            log::warn!("change_id: {} -> {}: old id not registered", old_id, new_id);
+            return UUID_MISMATCH;
+        };
+        let guid = {
+            let p = peer.read().await;
+            if p.guid.is_empty() || p.uuid.as_ref() != uuid {
+                log::warn!("change_id: {} -> {}: uuid mismatch", old_id, new_id);
+                return UUID_MISMATCH;
+            }
+            if !p.info.ip.is_empty() && norm(&p.info.ip) != norm(ip) {
+                log::warn!(
+                    "change_id: {} -> {}: request from {} but device is at {}",
+                    old_id,
+                    new_id,
+                    ip,
+                    p.info.ip
+                );
+                return UUID_MISMATCH;
+            }
+            p.guid.clone()
+        };
+
+        // Loads the target from the database into memory if it exists there.
+        let _ = self.get(new_id).await;
+
+        let mut map = self.map.write().await;
+        if let Some(target) = map.get(new_id) {
+            let t = target.read().await;
+            if !t.uuid.is_empty() && t.uuid.as_ref() != uuid {
+                return ID_EXISTS;
+            }
+            // The same device used this ID before: drop that old record so
+            // the rename can take the ID back.
+            if !t.guid.is_empty() && t.guid != guid {
+                if let Err(err) = self.db.delete_peer(&t.guid).await {
+                    log::error!("change_id: delete stale {} failed: {}", new_id, err);
+                    return SERVER_ERROR;
+                }
+            }
+        }
+        if let Err(err) = self.db.rename_peer(&guid, new_id).await {
+            log::error!("change_id: {} -> {} failed: {}", old_id, new_id, err);
+            return SERVER_ERROR;
+        }
+        map.remove(old_id);
+        map.insert(new_id.to_owned(), peer);
+        log::info!("change_id: {} -> {} (ip {})", old_id, new_id, ip);
+        OK
+    }
 }

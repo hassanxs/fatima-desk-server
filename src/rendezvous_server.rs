@@ -69,6 +69,33 @@ struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: Strin
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
 
+// Fatima Desk: custom IDs ("Change ID"). One change per IP per 30 seconds.
+static CHANGE_ID_LAST: Lazy<TokioMutex<HashMap<String, Instant>>> = Lazy::new(Default::default);
+const CHANGE_ID_MIN_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Same rule as the Fatima Desk client: a letter followed by 5-15 letters,
+/// digits, "_" or "-", or exactly 9 digits like the auto-generated IDs.
+fn is_valid_fatimadesk_id(id: &str) -> bool {
+    static RE: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r"^(?:[a-zA-Z][\w-]{5,15}|[0-9]{9})$").unwrap());
+    RE.is_match(id)
+}
+
+#[cfg(test)]
+mod fatimadesk_id_tests {
+    use super::is_valid_fatimadesk_id;
+
+    #[test]
+    fn id_rules() {
+        for ok in ["Laptop-1", "Office_PC", "abcdef", "a23456789012345X", "123456789"] {
+            assert!(is_valid_fatimadesk_id(ok), "{ok} should be valid");
+        }
+        for bad in ["12345", "abcde", "1abcdef", "12345678", "1234567890", "a b cdef", "a2345678901234567", "abc.def"] {
+            assert!(!is_valid_fatimadesk_id(bad), "{bad} should be invalid");
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Inner {
     serial: i32,
@@ -545,8 +572,8 @@ impl RendezvousServer {
                     msg_out.set_test_nat_response(res);
                     Self::send_to_sink(sink, msg_out).await;
                 }
-                Some(rendezvous_message::Union::RegisterPk(_)) => {
-                    let res = register_pk_response::Result::NOT_SUPPORT;
+                Some(rendezvous_message::Union::RegisterPk(rk)) => {
+                    let res = self.handle_change_id(rk, addr).await;
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
                         result: res.into(),
@@ -819,6 +846,36 @@ impl RendezvousServer {
     }
 
     #[inline]
+    /// Fatima Desk: custom IDs. The client's "Change ID" sends RegisterPk
+    /// over TCP with old_id, id and uuid; upstream's open-source server
+    /// answers NOT_SUPPORT to every TCP RegisterPk.
+    async fn handle_change_id(
+        &mut self,
+        rk: RegisterPk,
+        addr: SocketAddr,
+    ) -> register_pk_response::Result {
+        use register_pk_response::Result::*;
+        if rk.old_id.is_empty() || rk.uuid.is_empty() {
+            return NOT_SUPPORT;
+        }
+        if !is_valid_fatimadesk_id(&rk.id) {
+            return INVALID_ID_FORMAT;
+        }
+        if rk.id == rk.old_id {
+            return OK;
+        }
+        let ip = try_into_v4(addr).ip().to_string();
+        {
+            let mut last = CHANGE_ID_LAST.lock().await;
+            last.retain(|_, t| t.elapsed() < CHANGE_ID_MIN_INTERVAL);
+            if last.contains_key(&ip) {
+                return TOO_FREQUENT;
+            }
+            last.insert(ip.clone(), Instant::now());
+        }
+        self.pm.change_id(&rk.old_id, &rk.id, &rk.uuid, &ip).await
+    }
+
     async fn send_to_sink(sink: &mut Option<Sink>, msg: RendezvousMessage) {
         if let Some(sink) = sink.as_mut() {
             if let Ok(bytes) = msg.write_to_bytes() {
