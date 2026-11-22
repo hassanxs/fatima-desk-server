@@ -1,0 +1,32 @@
+{{define "content"}}
+<div class="head">
+  <h1>Connections</h1>
+  <div class="stats"><span class="stat"><b>{{.Total}}</b> requests recorded</span></div>
+</div>
+{{if .LiveErr}}<div class="flash err">Could not read the latest requests from the ID server: {{.LiveErr}}</div>{{end}}
+{{if .LoadErr}}<div class="flash err">{{.LoadErr}}</div>{{end}}
+<div class="toolbar"><label class="auto"><input type="checkbox" data-autorefresh="30"> Auto-refresh</label></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Time (UTC)</th><th>From</th><th></th><th>To device</th><th>Device IP</th></tr></thead>
+  <tbody>
+  {{range .Rows}}
+    <tr>
+      <td>{{.Time}}</td>
+      <td><span class="mono">{{.FromIP}}</span>{{if .FromIDs}}<div class="sub">{{join .FromIDs ", "}}</div>{{end}}</td>
+      <td class="arrow">→</td>
+      <td>{{if .ToName}}{{.ToName}} <span class="sub mono">{{spaced .ToID}}</span>{{else}}<span class="mono">{{spaced .ToID}}</span>{{end}}</td>
+      <td class="mono">{{.ToIP}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="5" class="empty">No connection requests recorded yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<div class="pager">
+  {{if gt .PageNum 1}}<a class="link" href="/connections?page={{sub .PageNum 1}}">← Newer</a>{{end}}
+  {{if .HasNext}}<a class="link" href="/connections?page={{add .PageNum 1}}">Older →</a>{{end}}
+</div>
+<p class="hint">Each row is a request to reach a device by its ID. “From” is the requesting computer's IP and, if it matches, the registered devices on that IP. The ID server repeats a request from the same IP to the same device at most once a minute. History is kept from when this Console was first started.</p>
+{{end}}

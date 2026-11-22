@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fatima Desk Console</title>
+<link rel="icon" href="/static/logo.svg">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="28" height="28"><span>Fatima Desk <b>Console</b></span></a>
+  <nav>
+    <a href="/" {{if eq .Page "devices"}}class="on"{{end}}>Devices</a>
+    <a href="/connections" {{if eq .Page "connections"}}class="on"{{end}}>Connections</a>
+    <a href="/relay" {{if eq .Page "relay"}}class="on"{{end}}>Relay</a>
+    <a href="/activity" {{if eq .Page "activity"}}class="on"{{end}}>Activity</a>
+  </nav>
+  <form method="post" action="/logout" class="logout">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="ghost">Log out</button>
+  </form>
+</header>
+<main>
+  {{if .Flash}}<div class="flash ok">{{.Flash}}</div>{{end}}
+  {{if .Err}}<div class="flash err">{{.Err}}</div>{{end}}
+  {{template "content" .}}
+</main>
+</body>
+</html>

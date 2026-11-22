@@ -1,0 +1,71 @@
+{{define "content"}}
+<div class="head">
+  <h1>Devices</h1>
+  <div class="stats">
+    <span class="stat"><b>{{.Online}}</b> online</span>
+    <span class="stat"><b>{{.Total}}</b> registered</span>
+  </div>
+</div>
+{{if .LoadErr}}<div class="flash err">Could not read the server's device list: {{.LoadErr}}</div>{{end}}
+{{if .OnlineErr}}<div class="flash err">Could not ask the ID server who is online: {{.OnlineErr}}</div>{{end}}
+
+<form class="toolbar" method="get" action="/">
+  <input type="search" name="q" value="{{.Q}}" placeholder="Search ID, name, note or IP">
+  {{if .ShowHidden}}<input type="hidden" name="hidden" value="1">{{end}}
+  <button type="submit" class="ghost">Search</button>
+  {{if .HiddenCount}}
+    {{if .ShowHidden}}<a class="link" href="/">Hide hidden devices</a>
+    {{else}}<a class="link" href="/?hidden=1">Show {{.HiddenCount}} hidden</a>{{end}}
+  {{end}}
+  <label class="auto"><input type="checkbox" data-autorefresh="30"> Auto-refresh</label>
+</form>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>ID</th><th>Name</th><th>Note</th><th>Last IP</th><th>Last seen online</th><th>First seen</th><th></th></tr></thead>
+  <tbody>
+  {{range .Devices}}
+    <tr class="{{if .Hidden}}muted{{end}}">
+      <td><span class="dot {{if .Online}}on{{end}}" title="{{if .Online}}Online{{else}}Offline{{end}}"></span></td>
+      <td class="mono">{{spaced .ID}}</td>
+      <td>{{if .Name}}{{.Name}}{{else}}<span class="dim">—</span>{{end}}</td>
+      <td class="note">{{.Note}}</td>
+      <td class="mono">{{.IP}}{{if .Blocked}} <span class="tag red">relay blocked</span>{{end}}</td>
+      <td>{{if .Online}}<span class="tag green">now</span>{{else if .LastSeen}}{{.LastSeen}} UTC{{else}}<span class="dim">not yet seen</span>{{end}}</td>
+      <td>{{.FirstSeen}} UTC</td>
+      <td class="actions">
+        <button type="button" class="ghost small" data-toggle="edit-{{.ID}}">Edit</button>
+        {{if .Hidden}}
+        <form method="post" action="/devices/{{.ID}}/unhide"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="ghost small">Unhide</button></form>
+        {{else}}
+        <form method="post" action="/devices/{{.ID}}/hide"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="ghost small">Hide</button></form>
+        {{end}}
+      </td>
+    </tr>
+    <tr id="edit-{{.ID}}" class="editrow" hidden>
+      <td></td>
+      <td colspan="7">
+        <form method="post" action="/devices/{{.ID}}/meta" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <label>Name <input name="name" value="{{.Name}}" maxlength="80" placeholder="e.g. Office PC"></label>
+          <label class="grow">Note <input name="note" value="{{.Note}}" maxlength="300" placeholder="Anything useful about this device"></label>
+          <button type="submit">Save</button>
+        </form>
+        {{if .IP}}
+        <form method="post" action="{{if .Blocked}}/unblock{{else}}/block{{end}}" class="inline" data-confirm="{{if .Blocked}}Allow relay connections from {{.IP}} again?{{else}}Block relay connections from {{.IP}}? Every device on that IP is affected.{{end}}">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="ip" value="{{.IP}}">
+          <input type="hidden" name="back" value="devices">
+          <button type="submit" class="{{if .Blocked}}ghost{{else}}danger{{end}}">{{if .Blocked}}Unblock {{.IP}} on relay{{else}}Block {{.IP}} on relay{{end}}</button>
+        </form>
+        {{end}}
+      </td>
+    </tr>
+  {{else}}
+    <tr><td colspan="8" class="empty">No devices{{if .Q}} match “{{.Q}}”{{else}} have registered yet{{end}}.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="hint">Online status comes live from the ID server. “Last seen online” is recorded by this Console every 30 seconds, from when it was first started. Hiding a device only hides it here; it can still connect.</p>
+{{end}}

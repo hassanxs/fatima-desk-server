@@ -10,3 +10,8 @@ src/version.rs
 db_v2.sqlite3
 test.*
 .idea
+
+# Fatima Desk Console
+console/build/
+console-data/
+.env

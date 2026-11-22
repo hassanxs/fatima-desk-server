@@ -1,0 +1,19 @@
+{{define "content"}}
+<div class="head"><h1>Activity</h1></div>
+{{if .LoadErr}}<div class="flash err">{{.LoadErr}}</div>{{end}}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Time (UTC)</th><th>From IP</th><th>Action</th><th>Details</th></tr></thead>
+  <tbody>
+  {{range .Rows}}
+    <tr class="{{if or (eq .Action "login failed") (eq .Action "login blocked")}}warn{{end}}">
+      <td>{{.Time}}</td><td class="mono">{{.IP}}</td><td>{{.Action}}</td><td class="note">{{.Detail}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="4" class="empty">No activity yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="hint">Every sign-in, failed sign-in and change made in this Console. Showing the latest 300.</p>
+{{end}}

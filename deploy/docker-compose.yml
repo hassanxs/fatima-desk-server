@@ -1,0 +1,81 @@
+# Fatima Desk server (ID server + relay) and its admin Console, for the VPS.
+#
+# Deployed to ~/fatimadesk-server/ on the VPS, following the VPS deploy runbook:
+# own project name, own container names, own directory. The ID server and
+# relay publish raw ports (Template B); the Console is reached only through
+# Nginx Proxy Manager over npm_default (Template A) and publishes nothing.
+#
+# Ports avoid 21116, which hopsignal (HopToDesk) already publishes:
+#   21215/tcp      ID server NAT-type test   (hbbs port - 1)
+#   21216/tcp+udp  ID server                 (hbbs -p 21216)
+#   21217/tcp      relay                     (hbbr -p 21217)
+# The web-client websocket ports (21218/21219) are not published.
+#
+# Network layout: hbbr and the Console share hbbs's network namespace
+# (network_mode: service:hbbs). Both servers accept their admin commands only
+# from loopback, so this is how the Console reaches them. Because of that, all
+# published ports are declared on hbbs, including the relay's 21217.
+#
+# Security: on first start hbbs writes a key pair to ./data (id_ed25519 and
+# id_ed25519.pub). "-k _" makes both servers reject any client that does not
+# carry that public key, so only Fatima Desk builds can use this server.
+# Back up ./data: losing it means rebuilding every Fatima Desk client.
+# The Console's admin password lives in ./.env (FD_ADMIN_USER,
+# FD_ADMIN_PASSWORD), created on the server, mode 600, never committed.
+
+name: fatimadesk-server
+
+services:
+  hbbs:
+    image: rustdesk/rustdesk-server:1.1.16
+    container_name: fatimadesk-id
+    command: hbbs -p 21216 -r 217.77.7.236:21217 -k _
+    volumes:
+      - ./data:/root
+    ports:
+      - "21215:21215/tcp"
+      - "21216:21216/tcp"
+      - "21216:21216/udp"
+      - "21217:21217/tcp" # relay (hbbr runs in this network namespace)
+    networks:
+      default: {}
+      npm:
+        aliases:
+          - fatimadesk-console # Nginx Proxy Manager forwards to fatimadesk-console:8080
+    restart: unless-stopped
+
+  hbbr:
+    image: rustdesk/rustdesk-server:1.1.16
+    container_name: fatimadesk-relay
+    command: hbbr -p 21217 -k _
+    volumes:
+      - ./data:/root
+    network_mode: "service:hbbs"
+    depends_on:
+      - hbbs
+    restart: unless-stopped
+
+  console:
+    build: ./console
+    image: fatimadesk-console:1
+    container_name: fatimadesk-console
+    network_mode: "service:hbbs"
+    depends_on:
+      - hbbs
+      - hbbr
+    env_file: .env
+    environment:
+      FD_LISTEN: ":8080"
+      FD_SERVER_DATA: /server-data
+      FD_CONSOLE_DB: /console-data/console.db
+      FD_NAT_PORT: "21215"
+      FD_RELAY_PORT: "21217"
+    volumes:
+      - ./data:/server-data # reads db_v2.sqlite3 (read-only), maintains blocklist.txt
+      - ./console-data:/console-data
+    restart: unless-stopped
+
+networks:
+  npm:
+    external: true
+    name: npm_default

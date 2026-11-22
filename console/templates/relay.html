@@ -1,0 +1,63 @@
+{{define "content"}}
+<div class="head"><h1>Relay</h1></div>
+{{if .RelayErr}}<div class="flash err">Could not reach the relay: {{.RelayErr}}</div>{{end}}
+
+<section class="card">
+  <div class="card-head"><h2>Relay traffic by IP</h2><label class="auto"><input type="checkbox" data-autorefresh="10"> Auto-refresh</label></div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>IP</th><th>Devices on this IP</th><th>Time</th><th>Data</th><th>Now</th><th>Average</th><th>Peak</th></tr></thead>
+    <tbody>
+    {{range .Usage}}
+      <tr>
+        <td class="mono">{{.IP}}</td>
+        <td>{{with index $.ByIP .IP}}{{join . ", "}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{dur .Seconds}}</td>
+        <td>{{mb .TotalMB}} MB</td>
+        <td>{{if .NowKbps}}<span class="tag green">{{.NowKbps}} kb/s</span>{{else}}<span class="dim">idle</span>{{end}}</td>
+        <td>{{.AvgKbps}} kb/s</td>
+        <td>{{.PeakKbps}} kb/s</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="empty">Nothing has gone through the relay since it last started. Most sessions connect directly and never use it.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<div class="grid2">
+<section class="card">
+  <h2>Speed limits</h2>
+  <form method="post" action="/relay/settings" class="stack">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    {{range .Settings}}
+    <label>{{.Label}} <span class="sub">{{.Help}}</span>
+      <span class="unit"><input name="{{.Cmd}}" type="number" min="0.1" step="0.1" value="{{.Value}}"> Mb/s</span>
+    </label>
+    {{end}}
+    <button type="submit">Save limits</button>
+  </form>
+  <p class="hint">Applies only to sessions going through your relay. Saved limits are re-applied automatically if the relay restarts.</p>
+</section>
+
+<section class="card">
+  <h2>Blocked IPs</h2>
+  <form method="post" action="/block" class="inline" data-confirm="Block relay connections from this IP?">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input name="ip" placeholder="IP address, e.g. 203.0.113.7" required>
+    <button type="submit" class="danger">Block</button>
+  </form>
+  <ul class="iplist">
+    {{range .Blocklist}}
+    <li><span class="mono">{{.}}</span>
+      <form method="post" action="/unblock"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="ip" value="{{.}}"><button class="ghost small">Unblock</button></form>
+    </li>
+    {{else}}
+    <li class="dim">No IPs blocked.</li>
+    {{end}}
+  </ul>
+  <p class="hint">A blocked IP can't use your relay. Blocks are saved and survive restarts. Devices on that IP can still register and connect directly when their networks allow it.</p>
+</section>
+</div>
+{{end}}

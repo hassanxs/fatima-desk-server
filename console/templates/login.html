@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Fatima Desk Console</title>
+<link rel="icon" href="/static/logo.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+<form method="post" action="/login" class="login-card" autocomplete="on">
+  <img src="/static/logo.svg" alt="" width="56" height="56">
+  <h1>Fatima Desk Console</h1>
+  {{if eq .Error "bad"}}<div class="flash err">Wrong user name or password.</div>{{end}}
+  {{if eq .Error "locked"}}<div class="flash err">Too many failed attempts. Try again in 15 minutes.</div>{{end}}
+  <label>User name<input name="user" autocomplete="username" required autofocus></label>
+  <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+  <button type="submit">Sign in</button>
+</form>
+</body>
+</html>
