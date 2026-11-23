@@ -10,6 +10,7 @@ Admin dashboard for the Fatima Desk server (RustDesk `hbbs` + `hbbr` 1.1.16).
 | Connections | Requests to reach a device: time, requester IP (and matching devices), target ID | Saved history (kept across server restarts) |
 | Relay | Traffic per IP through the relay | Speed limits (re-applied after relay restarts), block/unblock IPs (saved to `blocklist.txt`) |
 | Activity | Every sign-in, failed sign-in and change made in the Console | — |
+| Security | Whether two-factor sign-in is on, backup codes left | Turn two-factor sign-in on or off, make new backup codes |
 
 ## How it reaches the server
 
@@ -70,4 +71,14 @@ To change it, edit `.env` on the server and run `docker compose up -d console` i
 
 ## Security
 
-Single admin account; 5 failed sign-ins from one IP lock it out for 15 minutes. Sessions last 12 hours. Session cookie is Secure, HttpOnly, SameSite=Strict, and every form carries a CSRF token. Strict Content-Security-Policy (no inline script or style). Proxy headers (`CF-Connecting-IP`, `X-Real-IP`) are trusted only from private addresses (Nginx Proxy Manager).
+Single admin account; 5 failed sign-ins from one IP lock it out for 15 minutes.
+
+Two-factor sign-in (Security page): time-based codes from an authenticator app (RFC 6238, 30 s, 6 digits; one step of clock drift either way; each code accepted once), plus 10 single-use backup codes stored as SHA-256 hashes. After the password, the code must be entered within 5 minutes and in 3 tries; wrong codes also count toward the IP lockout. Turning it off or making new backup codes needs a current code. The secret is in `console.db` (settings table), so the nightly backup keeps it. Locked out (phone and backup codes lost):
+
+```bash
+docker exec fatimadesk-console /fatimadesk-console reset-2fa
+```
+
+which turns it off and records "2fa reset" under Activity.
+
+ Sessions last 12 hours. Session cookie is Secure, HttpOnly, SameSite=Strict, and every form carries a CSRF token. Strict Content-Security-Policy (no inline script or style). Proxy headers (`CF-Connecting-IP`, `X-Real-IP`) are trusted only from private addresses (Nginx Proxy Manager).

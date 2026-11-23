@@ -13,6 +13,8 @@
   <h1>Fatima Desk Console</h1>
   {{if eq .Error "bad"}}<div class="flash err">Wrong user name or password.</div>{{end}}
   {{if eq .Error "locked"}}<div class="flash err">Too many failed attempts. Try again in 15 minutes.</div>{{end}}
+  {{if eq .Error "expired"}}<div class="flash err">The sign-in took too long. Enter your password again.</div>{{end}}
+  {{if eq .Error "code"}}<div class="flash err">Too many wrong codes. Enter your password again.</div>{{end}}
   <label>User name<input name="user" autocomplete="username" required autofocus></label>
   <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
   <button type="submit">Sign in</button>

@@ -48,6 +48,8 @@ type App struct {
 	mu       sync.Mutex // serialises blocklist file edits
 	live     *Live
 	rejects  *RateLog
+	pending  *pendingLogins // password accepted, two-factor code still needed
+	enroll   *enrollments   // two-factor secrets shown, not yet confirmed
 }
 
 func env(k, def string) string {
@@ -58,6 +60,15 @@ func env(k, def string) string {
 }
 
 func main() {
+	// `fatimadesk-console reset-2fa`: turn off two-factor sign-in from the
+	// server (docker exec), for when the phone and backup codes are lost.
+	if len(os.Args) == 2 && os.Args[1] == "reset-2fa" {
+		if err := resetTwoFactor(env("FD_CONSOLE_DB", "/console-data/console.db")); err != nil {
+			log.Fatalf("reset-2fa: %v", err)
+		}
+		fmt.Println("Two-factor sign-in is off. Sign in with the user name and password, then turn it on again under Security.")
+		return
+	}
 	cfg := Config{
 		Listen:       env("FD_LISTEN", ":8080"),
 		User:         env("FD_ADMIN_USER", "admin"),
@@ -93,6 +104,8 @@ func main() {
 		tpl:      loadTemplates(),
 		live:     NewLive(),
 		rejects:  NewRateLog(10 * time.Minute),
+		pending:  newPendingLogins(),
+		enroll:   &enrollments{m: map[string]string{}},
 	}
 	go app.background()
 
@@ -145,12 +158,13 @@ var funcs = template.FuncMap{
 }
 
 func loadTemplates() map[string]*template.Template {
-	pages := []string{"devices", "connections", "relay", "activity", "sessions", "policy"}
+	pages := []string{"devices", "connections", "relay", "activity", "sessions", "policy", "security"}
 	m := map[string]*template.Template{}
 	for _, p := range pages {
 		m[p] = template.Must(template.New("layout.html").Funcs(funcs).ParseFS(assets, "templates/layout.html", "templates/"+p+".html"))
 	}
 	m["login"] = template.Must(template.New("login.html").Funcs(funcs).ParseFS(assets, "templates/login.html"))
+	m["login-code"] = template.Must(template.New("login-code.html").Funcs(funcs).ParseFS(assets, "templates/login-code.html"))
 	return m
 }
 
@@ -170,6 +184,14 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("POST /login", a.loginPost)
+	mux.HandleFunc("GET /login/code", a.codePage)
+	mux.HandleFunc("POST /login/code", a.codePost)
+	mux.HandleFunc("GET /security", a.auth(a.securityPage))
+	mux.HandleFunc("POST /security/start", a.auth(a.securityStart))
+	mux.HandleFunc("POST /security/enable", a.auth(a.securityEnable))
+	mux.HandleFunc("POST /security/cancel", a.auth(a.securityCancel))
+	mux.HandleFunc("POST /security/backup-codes", a.auth(a.securityBackup))
+	mux.HandleFunc("POST /security/disable", a.auth(a.securityDisable))
 	mux.HandleFunc("POST /logout", a.auth(a.logout))
 	mux.HandleFunc("GET /{$}", a.auth(a.devicesPage))
 	mux.HandleFunc("POST /devices/{id}/meta", a.auth(a.deviceMeta))
@@ -390,14 +412,16 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?e=bad", http.StatusSeeOther)
 		return
 	}
-	a.throttle.Reset(ip)
-	id, _ := a.sessions.New()
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: id, Path: "/", HttpOnly: true,
-		Secure: a.cfg.SecureCookie, SameSite: http.SameSiteStrictMode, MaxAge: int((12 * time.Hour).Seconds()),
-	})
-	a.store.Audit(ip, "login", "user="+a.cfg.User)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	if a.store.TwoFactorOn() {
+		// Password is right; the session starts only after the code.
+		http.SetCookie(w, &http.Cookie{
+			Name: pendingCookie, Value: a.pending.New(), Path: "/login", HttpOnly: true,
+			Secure: a.cfg.SecureCookie, SameSite: http.SameSiteStrictMode, MaxAge: int(pendingTTL.Seconds()),
+		})
+		http.Redirect(w, r, "/login/code", http.StatusSeeOther)
+		return
+	}
+	a.startSession(w, r, "")
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request, _ session) {

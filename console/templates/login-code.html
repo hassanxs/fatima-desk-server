@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Fatima Desk Console</title>
+<link rel="icon" href="/static/logo.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+<form method="post" action="/login/code" class="login-card" autocomplete="off">
+  <img src="/static/logo.svg" alt="" width="56" height="56">
+  <h1>Two-factor sign-in</h1>
+  {{if eq .Error "bad"}}<div class="flash err">That code didn't work. Use the newest code from the app; each code works once.</div>{{end}}
+  <label>Code from your authenticator app
+    <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required autofocus placeholder="123 456">
+  </label>
+  <button type="submit">Verify</button>
+  <p class="hint">Phone not with you? Enter one of your backup codes instead (like <span class="mono">abcde-fghjk</span>). Each backup code works once.</p>
+</form>
+</body>
+</html>

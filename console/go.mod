@@ -2,7 +2,10 @@ module fatimadesk/console
 
 go 1.22
 
-require modernc.org/sqlite v1.34.5
+require (
+	modernc.org/sqlite v1.34.5
+	rsc.io/qr v0.2.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

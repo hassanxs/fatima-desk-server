@@ -18,6 +18,7 @@
     <a href="/relay" {{if eq .Page "relay"}}class="on"{{end}}>Relay</a>
     <a href="/policy" {{if eq .Page "policy"}}class="on"{{end}}>Device settings</a>
     <a href="/activity" {{if eq .Page "activity"}}class="on"{{end}}>Activity</a>
+    <a href="/security" {{if eq .Page "security"}}class="on"{{end}}>Security</a>
   </nav>
   <form method="post" action="/logout" class="logout">
     <input type="hidden" name="csrf" value="{{.CSRF}}">

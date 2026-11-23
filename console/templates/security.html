@@ -1,0 +1,54 @@
+{{define "content"}}
+<div class="head"><h1>Security</h1></div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Two-factor sign-in</h2>
+    {{if .On}}<span class="tag green">On</span>{{else}}<span class="tag red">Off</span>{{end}}
+  </div>
+
+  {{if .NewCodes}}
+    <p><b>Your backup codes.</b> Save them now, in a password manager or on paper: they won't be shown again. Each code signs you in once when your phone isn't with you.</p>
+    <ul class="codes mono">{{range .NewCodes}}<li>{{.}}</li>{{end}}</ul>
+    <p><a class="link" href="/security">I've saved them</a></p>
+  {{else if .On}}
+    <p>Signing in needs the user name, the password and a code from your authenticator app. {{.BackupLeft}} unused backup code{{if ne .BackupLeft 1}}s{{end}} left.</p>
+    <form method="post" action="/security/backup-codes" class="inline">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>Current code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required></label>
+      <button type="submit" class="ghost">Make new backup codes</button>
+    </form>
+    <form method="post" action="/security/disable" class="inline" data-confirm="Turn off two-factor sign-in? Anyone with the password could sign in.">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>Current code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required></label>
+      <button type="submit" class="danger">Turn off</button>
+    </form>
+  {{else if .Enrolling}}
+    <ol class="steps">
+      <li>Open an authenticator app (Google Authenticator, Microsoft Authenticator, Aegis, 1Password…) and add an account by scanning this code:
+        <div class="qr"><img src="{{.QR}}" alt="QR code for the authenticator app" width="246" height="246"></div>
+        Can't scan? Enter this key instead: <span class="mono">{{.Secret}}</span> (time-based, 6 digits).
+      </li>
+      <li>Type the 6-digit code the app shows:
+        <form method="post" action="/security/enable" class="inline">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required autofocus></label>
+          <button type="submit">Turn on</button>
+        </form>
+      </li>
+    </ol>
+    <form method="post" action="/security/cancel" class="inline">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button type="submit" class="ghost small">Cancel</button>
+    </form>
+  {{else}}
+    <p>Add a code from your phone to the user name and password, so a leaked password alone can't open the Console. You'll also get 10 backup codes for when the phone isn't with you.</p>
+    <form method="post" action="/security/start" class="inline">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button type="submit">Set up two-factor sign-in</button>
+    </form>
+  {{end}}
+</div>
+
+<p class="hint">Lost the phone and the backup codes? On the server, run <span class="mono">docker exec fatimadesk-console /fatimadesk-console reset-2fa</span>, then sign in with the password and set it up again. Every change here is recorded under Activity.</p>
+{{end}}
