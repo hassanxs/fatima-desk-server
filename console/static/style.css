@@ -52,6 +52,9 @@ form.inline label { display: flex; flex-direction: column; gap: 4px; color: var(
 form.inline label.grow { flex: 1; min-width: 220px; }
 form.stack { display: flex; flex-direction: column; gap: 14px; }
 form.stack label { display: flex; flex-direction: column; gap: 4px; }
+select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-width: 200px; }
+select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.formfoot { display: flex; justify-content: flex-end; margin-top: 16px; }
 .unit { display: flex; align-items: center; gap: 8px; color: var(--dim); }
 .unit input { width: 120px; }
 
@@ -67,6 +70,7 @@ tr.muted td { opacity: .55; }
 tr.warn td { color: var(--amber); }
 tr.editrow td { background: var(--panel-2); }
 td.note { color: var(--dim); max-width: 280px; }
+td.mono { white-space: nowrap; }
 td.actions { white-space: nowrap; text-align: right; }
 td.actions form { display: inline; }
 td.arrow { color: var(--dim); width: 20px; }

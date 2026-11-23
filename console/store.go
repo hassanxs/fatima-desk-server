@@ -30,6 +30,8 @@ type Device struct {
 	LastSeen  string // last time the Console saw it online
 	Online    bool
 	Blocked   bool
+	Info      SysInfo // what the device's app last reported (device API)
+	Reporting bool    // the app has sent a heartbeat recently
 }
 
 type ConnRow struct {
@@ -66,6 +68,9 @@ func OpenStore(consoleDB, peersDB string) (*Store, error) {
 		create table if not exists audit (
 			id integer primary key, ts text not null, ip text not null,
 			action text not null, detail text not null);`); err != nil {
+		return nil, fmt.Errorf("console db: %w", err)
+	}
+	if err := (&Store{db: db}).migrateAPI(); err != nil {
 		return nil, fmt.Errorf("console db: %w", err)
 	}
 	peers, err := sql.Open("sqlite", "file:"+peersDB+"?mode=ro&_pragma=busy_timeout(5000)")

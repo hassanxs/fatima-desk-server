@@ -1,0 +1,30 @@
+{{define "content"}}
+<div class="head">
+  <h1>Device settings</h1>
+  <div class="stats">{{if .Changed}}<span class="stat">Last pushed <b>{{.Changed}}</b> UTC</span>{{end}}</div>
+</div>
+<form method="post" action="/policy" class="card" data-confirm="Push these settings to every device?">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Setting</th><th>On every device</th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr>
+        <td>{{.Label}}{{if .Help}}<div class="sub">{{.Help}}</div>{{end}}</td>
+        <td>
+          <select name="{{.Key}}">
+            <option value="-" {{if not .Managed}}selected{{end}}>Device decides</option>
+            {{$v := .Value}}{{$m := .Managed}}
+            {{range .Options}}<option value="{{.Value}}" {{if and $m (eq .Value $v)}}selected{{end}}>{{.Label}}</option>{{end}}
+          </select>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  <div class="formfoot"><button type="submit">Push to devices</button></div>
+</form>
+<p class="hint">Online devices apply pushed settings within 15 seconds; offline devices apply them when they next come online. A setting set to “Device decides” is not pushed. If it was pushed before, it goes back to the app's default. Server address, key, passwords and two-factor settings can't be pushed: the app refuses them.</p>
+{{end}}

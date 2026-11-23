@@ -46,7 +46,7 @@ services:
       default: {}
       npm:
         aliases:
-          - fatimadesk-console # Nginx Proxy Manager forwards to fatimadesk-console:8080
+          - fatimadesk-console # Nginx Proxy Manager forwards to fatimadesk-console:8080 (admin) and :8081 (device API)
     restart: unless-stopped
 
   hbbr:
@@ -70,7 +70,8 @@ services:
       - hbbr
     env_file: .env
     environment:
-      FD_LISTEN: ":8080"
+      FD_LISTEN: ":8080"     # admin pages: proxy host for the Console, kept private
+      FD_API_LISTEN: ":8081" # device API: its own HTTPS proxy host, reachable by devices
       FD_SERVER_DATA: /server-data
       FD_CONSOLE_DB: /console-data/console.db
       FD_NAT_PORT: "21215"

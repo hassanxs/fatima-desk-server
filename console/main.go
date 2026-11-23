@@ -46,6 +46,8 @@ type App struct {
 	throttle *Throttle
 	tpl      map[string]*template.Template
 	mu       sync.Mutex // serialises blocklist file edits
+	live     *Live
+	rejects  *RateLog
 }
 
 func env(k, def string) string {
@@ -89,8 +91,25 @@ func main() {
 		sessions: NewSessions(12 * time.Hour),
 		throttle: NewThrottle(5, 15*time.Minute),
 		tpl:      loadTemplates(),
+		live:     NewLive(),
+		rejects:  NewRateLog(10 * time.Minute),
 	}
 	go app.background()
+
+	// The device API listens separately so only it is published to devices.
+	if apiListen := env("FD_API_LISTEN", ":8081"); apiListen != "off" {
+		api := &http.Server{
+			Addr:              apiListen,
+			Handler:           app.apiRoutes(),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       20 * time.Second,
+			WriteTimeout:      30 * time.Second,
+		}
+		go func() {
+			log.Printf("Fatima Desk device API listening on %s", apiListen)
+			log.Fatal(api.ListenAndServe())
+		}()
+	}
 
 	log.Printf("Fatima Desk Console listening on %s", cfg.Listen)
 	srv := &http.Server{
@@ -126,7 +145,7 @@ var funcs = template.FuncMap{
 }
 
 func loadTemplates() map[string]*template.Template {
-	pages := []string{"devices", "connections", "relay", "activity"}
+	pages := []string{"devices", "connections", "relay", "activity", "sessions", "policy"}
 	m := map[string]*template.Template{}
 	for _, p := range pages {
 		m[p] = template.Must(template.New("layout.html").Funcs(funcs).ParseFS(assets, "templates/layout.html", "templates/"+p+".html"))
@@ -164,6 +183,10 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /block", a.auth(a.blockPost(true)))
 	mux.HandleFunc("POST /unblock", a.auth(a.blockPost(false)))
 	mux.HandleFunc("GET /activity", a.auth(a.activityPage))
+	mux.HandleFunc("GET /sessions", a.auth(a.sessionsPage))
+	mux.HandleFunc("POST /sessions/{row}/end", a.auth(a.sessionEnd))
+	mux.HandleFunc("GET /policy", a.auth(a.policyPage))
+	mux.HandleFunc("POST /policy", a.auth(a.policyPost))
 	return securityHeaders(a.cfg.SecureCookie, mux)
 }
 
@@ -432,6 +455,7 @@ func (a *App) poll() {
 	} else {
 		log.Printf("connection log: %v", err)
 	}
+	a.store.PruneNonces()
 	// Re-apply saved relay limits (hbbr forgets them when it restarts).
 	for _, s := range relaySettings {
 		want, ok := a.store.Setting(s.Key)
@@ -477,6 +501,7 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 		}
 	}
 	pending := a.rd.Pending()
+	infos := a.store.SysInfos()
 	showHidden := r.URL.Query().Get("hidden") == "1"
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	var list []Device
@@ -486,6 +511,8 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 		dv.Online = online[dv.ID]
 		dv.Blocked = blocked[dv.IP]
 		dv.PendingID = pending[dv.ID]
+		dv.Info = infos[dv.GUID]
+		_, dv.Reporting = a.live.Reporting(dv.ID)
 		if dv.Online {
 			onlineCount++
 			seen = append(seen, dv.ID)
@@ -497,7 +524,7 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 				continue
 			}
 		}
-		if q != "" && !strings.Contains(strings.ToLower(dv.ID+" "+dv.Alias+"@fd "+dv.Name+" "+dv.Note+" "+dv.IP), q) {
+		if q != "" && !strings.Contains(strings.ToLower(dv.ID+" "+dv.Alias+"@fd "+dv.Name+" "+dv.Note+" "+dv.IP+" "+dv.Info.Hostname+" "+dv.Info.Username), q) {
 			continue
 		}
 		list = append(list, dv)

@@ -1,0 +1,109 @@
+{{define "content"}}
+<div class="head">
+  <h1>Sessions</h1>
+  <div class="stats">
+    <span class="stat"><b>{{len .Live}}</b> live now</span>
+    <span class="stat"><b>{{.Total}}</b> recorded</span>
+  </div>
+</div>
+{{if .LoadErr}}<div class="flash err">{{.LoadErr}}</div>{{end}}
+<div class="toolbar"><label class="auto"><input type="checkbox" data-autorefresh="15"> Auto-refresh</label></div>
+
+<div class="card">
+  <h2>Live now</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Device</th><th>Connected from</th><th>Kind</th><th>Started (UTC)</th><th></th></tr></thead>
+    <tbody>
+    {{range .Live}}
+      <tr>
+        <td>{{if .DeviceName}}{{.DeviceName}} <span class="sub mono">{{spaced .DeviceID}}</span>{{else}}<span class="mono">{{spaced .DeviceID}}</span>{{end}}</td>
+        <td>{{if .PeerName}}{{.PeerName}} {{end}}<span class="sub mono">{{spaced .PeerID}}</span>{{if .IP}}<div class="sub mono">{{.IP}}</div>{{end}}</td>
+        <td>{{.TypeName}}</td>
+        <td>{{.Started}}</td>
+        <td class="actions">
+          <form method="post" action="/sessions/{{.RowID}}/end" data-confirm="End this session now? The person connected is disconnected.">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <button class="danger small">End session</button>
+          </form>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="empty">Nobody is connected to a device right now.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>History</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Started (UTC)</th><th>Device</th><th>Connected from</th><th>Kind</th><th>Ended (UTC)</th></tr></thead>
+    <tbody>
+    {{range .History}}
+      <tr class="{{if not .Authed}}muted{{end}}">
+        <td>{{.Started}}</td>
+        <td>{{if .DeviceName}}{{.DeviceName}} <span class="sub mono">{{spaced .DeviceID}}</span>{{else}}<span class="mono">{{spaced .DeviceID}}</span>{{end}}</td>
+        <td>{{if .PeerID}}{{if .PeerName}}{{.PeerName}} {{end}}<span class="sub mono">{{spaced .PeerID}}</span>{{end}}{{if .IP}}<div class="sub mono">{{.IP}}</div>{{end}}</td>
+        <td>{{.TypeName}}</td>
+        <td>{{if .Live}}<span class="tag green">live</span>{{else if .Ended}}{{.Ended}}{{else}}<span class="dim">not reported</span>{{end}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="empty">No sessions reported yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</div>
+<div class="pager">
+  {{if gt .PageNum 1}}<a class="link" href="/sessions?page={{sub .PageNum 1}}">← Newer</a>{{end}}
+  {{if .HasNext}}<a class="link" href="/sessions?page={{add .PageNum 1}}">Older →</a>{{end}}
+</div>
+
+<div class="card">
+  <h2>File transfers</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Time (UTC)</th><th>Device</th><th>By</th><th>Direction</th><th>Files</th></tr></thead>
+    <tbody>
+    {{range .Files}}
+      <tr>
+        <td>{{.Time}}</td>
+        <td>{{if .DeviceName}}{{.DeviceName}} <span class="sub mono">{{spaced .DeviceID}}</span>{{else}}<span class="mono">{{spaced .DeviceID}}</span>{{end}}</td>
+        <td>{{if .PeerName}}{{.PeerName}} {{end}}<span class="sub mono">{{spaced .PeerID}}</span>{{if .IP}}<div class="sub mono">{{.IP}}</div>{{end}}</td>
+        <td>{{.Direction}}</td>
+        <td><span class="mono">{{.Path}}</span>
+          {{if gt .Num 1}}<div class="sub">{{.Num}} files{{if .Files}}, largest: {{range $i, $f := .Files}}{{if $i}}, {{end}}{{$f.Name}}{{end}}{{end}}</div>{{end}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="empty">No file transfers reported yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Alarms</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Time (UTC)</th><th>Device</th><th>What happened</th><th>Details</th></tr></thead>
+    <tbody>
+    {{range .Alarms}}
+      <tr class="warn">
+        <td>{{.Time}}</td>
+        <td>{{if .DeviceName}}{{.DeviceName}} <span class="sub mono">{{spaced .DeviceID}}</span>{{else}}<span class="mono">{{spaced .DeviceID}}</span>{{end}}</td>
+        <td>{{.TypeName}}</td>
+        <td class="note mono">{{.Detail}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4" class="empty">No alarms. Devices report repeated wrong passwords and blocked connections here.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</div>
+<p class="hint">Each device's app reports its own sessions, file transfers and alarms here, so this page shows who actually signed in, unlike Connections, which shows requests seen by the ID server. “Not signed in” rows are connections that never got past the password. Ending a session reaches the device on its next check-in, every 3 seconds while a session is open.</p>
+{{end}}
