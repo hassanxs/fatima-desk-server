@@ -72,6 +72,7 @@ services:
     environment:
       FD_LISTEN: ":8080"     # admin pages: proxy host for the Console, kept private
       FD_API_LISTEN: ":8081" # device API: its own HTTPS proxy host, reachable by devices
+      FD_PUBLIC_URL: "https://fatimadesk.x.org.pk" # the Console's address; passkeys are bound to it
       FD_SERVER_DATA: /server-data
       FD_CONSOLE_DB: /console-data/console.db
       FD_NAT_PORT: "21215"

@@ -200,13 +200,17 @@ func (s *Store) NewBackupCodes() ([]string, error) {
 	return plain, s.SetSetting(setTOTPBackup, string(b))
 }
 
+// DisableTwoFactor also removes the passkeys: they only stand in for the code.
 func (s *Store) DisableTwoFactor() error {
 	for _, k := range []string{setTOTPSecret, setTOTPStep, setTOTPBackup} {
 		if err := s.DeleteSetting(k); err != nil {
 			return err
 		}
 	}
-	return nil
+	if err := s.migratePasskeys(); err != nil {
+		return err
+	}
+	return s.DeleteAllPasskeys()
 }
 
 // resetTwoFactor is the server-side way back in: `fatimadesk-console reset-2fa`.
@@ -314,6 +318,11 @@ func sessionCookie(r *http.Request) string {
 // ---- handlers -----------------------------------------------------------------
 
 func (a *App) startSession(w http.ResponseWriter, r *http.Request, how string) {
+	a.startSessionCookie(w, r, how)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) startSessionCookie(w http.ResponseWriter, r *http.Request, how string) {
 	ip := clientIP(r)
 	a.throttle.Reset(ip)
 	id, _ := a.sessions.New()
@@ -322,7 +331,6 @@ func (a *App) startSession(w http.ResponseWriter, r *http.Request, how string) {
 		Secure: a.cfg.SecureCookie, SameSite: http.SameSiteStrictMode, MaxAge: int((12 * time.Hour).Seconds()),
 	})
 	a.store.Audit(ip, "login", "user="+a.cfg.User+how)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (a *App) clearPending(w http.ResponseWriter, r *http.Request) {
@@ -338,7 +346,7 @@ func (a *App) codePage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?e=expired", http.StatusSeeOther)
 		return
 	}
-	a.render(w, "login-code", map[string]any{"Error": r.URL.Query().Get("e")})
+	a.render(w, "login-code", map[string]any{"Error": r.URL.Query().Get("e"), "Passkeys": len(a.store.Passkeys()) > 0})
 }
 
 func (a *App) codePost(w http.ResponseWriter, r *http.Request) {
@@ -380,6 +388,8 @@ func (a *App) securityPage(w http.ResponseWriter, r *http.Request, sess session)
 	d := a.base(r, sess, "security")
 	d["On"] = a.store.TwoFactorOn()
 	d["BackupLeft"] = a.store.BackupCodesLeft()
+	d["Passkeys"] = a.store.Passkeys()
+	d["PasswordFromConsole"] = a.store.PasswordChanged()
 	if secret := a.enroll.Peek(sessionCookie(r)); secret != "" && !a.store.TwoFactorOn() {
 		u := otpauthURL(secret, a.cfg.User)
 		img, err := qrDataURI(u)
@@ -437,11 +447,12 @@ func (a *App) securityEnable(w http.ResponseWriter, r *http.Request, sess sessio
 func (a *App) showBackupCodes(w http.ResponseWriter, r *http.Request, sess session, codes []string, msg string) {
 	d := a.base(r, sess, "security")
 	d["On"], d["BackupLeft"], d["NewCodes"], d["Flash"] = true, len(codes), codes, msg
+	d["Passkeys"], d["PasswordFromConsole"] = a.store.Passkeys(), a.store.PasswordChanged()
 	a.render(w, "security", d)
 }
 
 func (a *App) securityBackup(w http.ResponseWriter, r *http.Request, sess session) {
-	if ok, _ := a.store.CheckSecondFactor(r.FormValue("code")); !ok {
+	if ok, _ := a.confirmed(r); !ok {
 		http.Redirect(w, r, "/security?err="+url.QueryEscape("Wrong code: no new backup codes were made."), http.StatusSeeOther)
 		return
 	}
@@ -455,7 +466,7 @@ func (a *App) securityBackup(w http.ResponseWriter, r *http.Request, sess sessio
 }
 
 func (a *App) securityDisable(w http.ResponseWriter, r *http.Request, _ session) {
-	if ok, _ := a.store.CheckSecondFactor(r.FormValue("code")); !ok {
+	if ok, _ := a.confirmed(r); !ok {
 		http.Redirect(w, r, "/security?err="+url.QueryEscape("Wrong code: two-factor sign-in is still on."), http.StatusSeeOther)
 		return
 	}

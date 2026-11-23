@@ -1,5 +1,11 @@
+{{define "confirm"}}
+  <label>Current code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="123 456"></label>
+  {{if .}}<input type="hidden" name="passkey_token"><button type="button" class="ghost" data-passkey-confirm>Use a passkey instead</button>{{end}}
+{{end}}
+
 {{define "content"}}
 <div class="head"><h1>Security</h1></div>
+<input type="hidden" id="csrf" value="{{.CSRF}}">
 
 <div class="card">
   <div class="card-head">
@@ -12,15 +18,15 @@
     <ul class="codes mono">{{range .NewCodes}}<li>{{.}}</li>{{end}}</ul>
     <p><a class="link" href="/security">I've saved them</a></p>
   {{else if .On}}
-    <p>Signing in needs the user name, the password and a code from your authenticator app. {{.BackupLeft}} unused backup code{{if ne .BackupLeft 1}}s{{end}} left.</p>
+    <p>Signing in needs the user name, the password and then a code from your authenticator app{{if .Passkeys}} or a passkey{{end}}. {{.BackupLeft}} unused backup code{{if ne .BackupLeft 1}}s{{end}} left.</p>
     <form method="post" action="/security/backup-codes" class="inline">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <label>Current code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required></label>
+      {{template "confirm" .Passkeys}}
       <button type="submit" class="ghost">Make new backup codes</button>
     </form>
-    <form method="post" action="/security/disable" class="inline" data-confirm="Turn off two-factor sign-in? Anyone with the password could sign in.">
+    <form method="post" action="/security/disable" class="inline" data-confirm="Turn off two-factor sign-in? Your passkeys are removed too, and anyone with the password could sign in.">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <label>Current code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required></label>
+      {{template "confirm" .Passkeys}}
       <button type="submit" class="danger">Turn off</button>
     </form>
   {{else if .Enrolling}}
@@ -50,5 +56,56 @@
   {{end}}
 </div>
 
-<p class="hint">Lost the phone and the backup codes? On the server, run <span class="mono">docker exec fatimadesk-console /fatimadesk-console reset-2fa</span>, then sign in with the password and set it up again. Every change here is recorded under Activity.</p>
+<div class="card" id="passkeys">
+  <div class="card-head"><h2>Passkeys</h2></div>
+  {{if not .On}}
+    <p class="dim">Turn on two-factor sign-in first. Passkeys can then be used instead of the code.</p>
+  {{else}}
+    <p>Windows Hello, a phone or a security key (YubiKey…) can stand in for the authenticator code at sign-in, and confirm changes on this page. The password is still needed.</p>
+    {{if .Passkeys}}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Added</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+      {{range .Passkeys}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td>{{.Created}} UTC</td>
+          <td>{{if .LastUsed}}{{.LastUsed}} UTC{{else}}<span class="dim">never</span>{{end}}</td>
+          <td class="actions">
+            <form method="post" action="/security/passkeys/{{.ID}}/delete" class="inline" data-confirm="Remove the passkey &quot;{{.Name}}&quot;?">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              {{template "confirm" $.Passkeys}}
+              <button type="submit" class="danger small">Remove</button>
+            </form>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table></div>
+    {{end}}
+    <div class="inline passkey-add">
+      <label>Name <input id="passkey-name" maxlength="40" placeholder="e.g. Legion-5 Windows Hello"></label>
+      <button type="button" id="passkey-add">Add a passkey</button>
+    </div>
+    <p class="hint" id="passkey-msg" role="status"></p>
+  {{end}}
+</div>
+
+<div class="card" id="password">
+  <div class="card-head">
+    <h2>Password</h2>
+    <span class="tag {{if .PasswordFromConsole}}green{{else}}amber{{end}}">{{if .PasswordFromConsole}}set here{{else}}from .env{{end}}</span>
+  </div>
+  <form method="post" action="/security/password" class="stack narrow">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Current password <input type="password" name="current" autocomplete="current-password" required></label>
+    <label>New password (12 or more characters) <input type="password" name="new" autocomplete="new-password" minlength="12" maxlength="72" required></label>
+    <label>New password again <input type="password" name="confirm" autocomplete="new-password" minlength="12" maxlength="72" required></label>
+    {{if .On}}<div class="inline">{{template "confirm" .Passkeys}}</div>{{end}}
+    <div><button type="submit">Change password</button></div>
+  </form>
+  <p class="hint">Other signed-in browsers are signed out. The new password replaces the one in <span class="mono">.env</span>. Forgotten: run <span class="mono">docker exec fatimadesk-console /fatimadesk-console reset-password</span> on the server to go back to the <span class="mono">.env</span> password.</p>
+</div>
+
+<p class="hint">Lost the phone, the passkeys and the backup codes? On the server, run <span class="mono">docker exec fatimadesk-console /fatimadesk-console reset-2fa</span>, then sign in with the password and set it up again. Every change here is recorded under Activity.</p>
 {{end}}

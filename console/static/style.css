@@ -105,6 +105,11 @@ td.empty { text-align: center; color: var(--dim); padding: 32px; }
 .qr { margin: 10px 0; }
 .qr img { background: #fff; padding: 8px; border-radius: 8px; image-rendering: pixelated; }
 .login-card .hint { margin: 0; }
+.passkey-add { margin-top: 14px; display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.passkey-add label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 12px; }
+form.narrow { max-width: 460px; }
+.card + .card { margin-top: 0; }
+.login-card .or { text-align: center; color: var(--dim); font-size: 12px; margin: 0; }
 
 /* login */
 .login-page { min-height: 100vh; display: grid; place-items: center;

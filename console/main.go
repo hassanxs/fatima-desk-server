@@ -36,20 +36,23 @@ type Config struct {
 	ServerData   string // hbbs/hbbr data dir: db_v2.sqlite3, blocklist.txt
 	ConsoleDB    string
 	SecureCookie bool
+	PublicURL    string // https://console.example.com, for passkeys
 }
 
 type App struct {
-	cfg      Config
-	store    *Store
-	rd       *RDesk
-	sessions *Sessions
-	throttle *Throttle
-	tpl      map[string]*template.Template
-	mu       sync.Mutex // serialises blocklist file edits
-	live     *Live
-	rejects  *RateLog
-	pending  *pendingLogins // password accepted, two-factor code still needed
-	enroll   *enrollments   // two-factor secrets shown, not yet confirmed
+	cfg        Config
+	store      *Store
+	rd         *RDesk
+	sessions   *Sessions
+	throttle   *Throttle
+	tpl        map[string]*template.Template
+	mu         sync.Mutex // serialises blocklist file edits
+	live       *Live
+	rejects    *RateLog
+	pending    *pendingLogins // password accepted, two-factor code still needed
+	enroll     *enrollments   // two-factor secrets shown, not yet confirmed
+	ceremonies *ceremonies    // passkey challenges in flight
+	stepups    *stepUps       // fresh passkey confirmations for Security forms
 }
 
 func env(k, def string) string {
@@ -66,7 +69,16 @@ func main() {
 		if err := resetTwoFactor(env("FD_CONSOLE_DB", "/console-data/console.db")); err != nil {
 			log.Fatalf("reset-2fa: %v", err)
 		}
-		fmt.Println("Two-factor sign-in is off. Sign in with the user name and password, then turn it on again under Security.")
+		fmt.Println("Two-factor sign-in is off and passkeys are removed. Sign in with the user name and password, then turn it on again under Security.")
+		return
+	}
+	// `fatimadesk-console reset-password`: forget the password set in the
+	// Console, so FD_ADMIN_PASSWORD from .env works again.
+	if len(os.Args) == 2 && os.Args[1] == "reset-password" {
+		if err := resetPassword(env("FD_CONSOLE_DB", "/console-data/console.db")); err != nil {
+			log.Fatalf("reset-password: %v", err)
+		}
+		fmt.Println("The Console password is back to FD_ADMIN_PASSWORD from .env.")
 		return
 	}
 	cfg := Config{
@@ -76,6 +88,7 @@ func main() {
 		ServerData:   env("FD_SERVER_DATA", "/server-data"),
 		ConsoleDB:    env("FD_CONSOLE_DB", "/console-data/console.db"),
 		SecureCookie: env("FD_SECURE_COOKIE", "1") == "1",
+		PublicURL:    strings.TrimSuffix(os.Getenv("FD_PUBLIC_URL"), "/"),
 	}
 	if len(cfg.Password) < 12 {
 		log.Fatal("FD_ADMIN_PASSWORD must be set and at least 12 characters")
@@ -99,13 +112,15 @@ func main() {
 			NatPort:     natPort,
 			OnlineHost:  os.Getenv("FD_ONLINE_HOST"),
 		},
-		sessions: NewSessions(12 * time.Hour),
-		throttle: NewThrottle(5, 15*time.Minute),
-		tpl:      loadTemplates(),
-		live:     NewLive(),
-		rejects:  NewRateLog(10 * time.Minute),
-		pending:  newPendingLogins(),
-		enroll:   &enrollments{m: map[string]string{}},
+		sessions:   NewSessions(12 * time.Hour),
+		throttle:   NewThrottle(5, 15*time.Minute),
+		tpl:        loadTemplates(),
+		live:       NewLive(),
+		rejects:    NewRateLog(10 * time.Minute),
+		pending:    newPendingLogins(),
+		enroll:     &enrollments{m: map[string]string{}},
+		ceremonies: &ceremonies{m: map[string]ceremony{}},
+		stepups:    &stepUps{m: map[string]ceremony{}},
 	}
 	go app.background()
 
@@ -192,6 +207,14 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /security/cancel", a.auth(a.securityCancel))
 	mux.HandleFunc("POST /security/backup-codes", a.auth(a.securityBackup))
 	mux.HandleFunc("POST /security/disable", a.auth(a.securityDisable))
+	mux.HandleFunc("POST /security/password", a.auth(a.passwordPost))
+	mux.HandleFunc("POST /security/passkeys/register/begin", a.auth(a.passkeyRegisterBegin))
+	mux.HandleFunc("POST /security/passkeys/register/finish", a.auth(a.passkeyRegisterFinish))
+	mux.HandleFunc("POST /security/passkeys/verify/begin", a.auth(a.passkeyVerifyBegin))
+	mux.HandleFunc("POST /security/passkeys/verify/finish", a.auth(a.passkeyVerifyFinish))
+	mux.HandleFunc("POST /security/passkeys/{id}/delete", a.auth(a.passkeyDelete))
+	mux.HandleFunc("POST /login/passkey/begin", a.loginPasskeyBegin)
+	mux.HandleFunc("POST /login/passkey/finish", a.loginPasskeyFinish)
 	mux.HandleFunc("POST /logout", a.auth(a.logout))
 	mux.HandleFunc("GET /{$}", a.auth(a.devicesPage))
 	mux.HandleFunc("POST /devices/{id}/meta", a.auth(a.deviceMeta))
@@ -404,7 +427,7 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userOK := subtle.ConstantTimeCompare([]byte(r.FormValue("user")), []byte(a.cfg.User)) == 1
-	passOK := subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(a.cfg.Password)) == 1
+	passOK := a.checkPassword(r.FormValue("password"))
 	if !userOK || !passOK {
 		a.throttle.Fail(ip)
 		a.store.Audit(ip, "login failed", "user="+trim(r.FormValue("user"), 40))

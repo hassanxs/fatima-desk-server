@@ -10,7 +10,7 @@ Admin dashboard for the Fatima Desk server (RustDesk `hbbs` + `hbbr` 1.1.16).
 | Connections | Requests to reach a device: time, requester IP (and matching devices), target ID | Saved history (kept across server restarts) |
 | Relay | Traffic per IP through the relay | Speed limits (re-applied after relay restarts), block/unblock IPs (saved to `blocklist.txt`) |
 | Activity | Every sign-in, failed sign-in and change made in the Console | — |
-| Security | Whether two-factor sign-in is on, backup codes left | Turn two-factor sign-in on or off, make new backup codes |
+| Security | Two-factor sign-in, backup codes left, passkeys, where the password comes from | Turn two-factor sign-in on or off, make new backup codes, add or remove passkeys, change the password |
 
 ## How it reaches the server
 
@@ -64,6 +64,7 @@ docker compose build console && docker compose up -d
 | `FD_CONSOLE_DB` | `/console-data/console.db` | |
 | `FD_NAT_PORT` / `FD_RELAY_PORT` | `21215` / `21217` | |
 | `FD_SECURE_COOKIE` | `1` | Set `0` only for local testing over plain HTTP |
+| `FD_PUBLIC_URL` | — | The Console's address, e.g. `https://console.example.com`; passkeys are bound to it. Empty: the address the browser used |
 
 Read the admin password: `ssh <user>@<server> cat fatimadesk-server/.env`
 
@@ -79,6 +80,16 @@ Two-factor sign-in (Security page): time-based codes from an authenticator app (
 docker exec fatimadesk-console /fatimadesk-console reset-2fa
 ```
 
-which turns it off and records "2fa reset" under Activity.
+which turns it off, removes the passkeys and records "2fa reset" under Activity.
+
+Passkeys (WebAuthn: Windows Hello, a phone, a security key) can be added while two-factor sign-in is on. After the password, a passkey works instead of the code, and it can confirm the Security forms instead of a code. They are bound to `FD_PUBLIC_URL` (set in `deploy/docker-compose.yml`); changing the Console's domain makes them stop working, so add new ones afterwards. Up to 10; each keeps its signature counter, and one that goes backwards (a cloned key) is refused.
+
+Changing the password (Security page) needs the current password and, with two-factor sign-in on, a code or passkey. The new one (12–72 bytes) is stored as a bcrypt hash in `console.db` and replaces `FD_ADMIN_PASSWORD`; other sessions are signed out. Forgotten:
+
+```bash
+docker exec fatimadesk-console /fatimadesk-console reset-password
+```
+
+and the `.env` password works again.
 
  Sessions last 12 hours. Session cookie is Secure, HttpOnly, SameSite=Strict, and every form carries a CSRF token. Strict Content-Security-Policy (no inline script or style). Proxy headers (`CF-Connecting-IP`, `X-Real-IP`) are trusted only from private addresses (Nginx Proxy Manager).

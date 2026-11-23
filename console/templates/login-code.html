@@ -6,6 +6,7 @@
 <title>Sign in · Fatima Desk Console</title>
 <link rel="icon" href="/static/logo.svg">
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/passkey.js" defer></script>
 </head>
 <body class="login-page">
 <form method="post" action="/login/code" class="login-card" autocomplete="off">
@@ -16,6 +17,11 @@
     <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required autofocus placeholder="123 456">
   </label>
   <button type="submit">Verify</button>
+  {{if .Passkeys}}
+  <p class="or">or</p>
+  <button type="button" class="ghost" id="passkey-login">Use a passkey</button>
+  <p class="flash err" id="passkey-msg" role="status" hidden></p>
+  {{end}}
   <p class="hint">Phone not with you? Enter one of your backup codes instead (like <span class="mono">abcde-fghjk</span>). Each backup code works once.</p>
 </form>
 </body>

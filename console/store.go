@@ -74,6 +74,9 @@ func OpenStore(consoleDB, peersDB string) (*Store, error) {
 	if err := (&Store{db: db}).migrateAPI(); err != nil {
 		return nil, fmt.Errorf("console db: %w", err)
 	}
+	if err := (&Store{db: db}).migratePasskeys(); err != nil {
+		return nil, fmt.Errorf("console db: %w", err)
+	}
 	peers, err := sql.Open("sqlite", "file:"+peersDB+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
