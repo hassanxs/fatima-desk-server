@@ -85,16 +85,34 @@ fn is_valid_fatimadesk_id(id: &str) -> bool {
     RE.is_match(id)
 }
 
-/// An alias is a letter followed by 5-15 letters, digits, "_" or "-".
+/// An alias is a letter followed by 3-15 letters, digits, "_" or "-".
 fn is_valid_fatimadesk_alias(alias: &str) -> bool {
     static RE: Lazy<regex::Regex> =
-        Lazy::new(|| regex::Regex::new(r"^[a-zA-Z][\w-]{5,15}$").unwrap());
+        Lazy::new(|| regex::Regex::new(r"^[a-zA-Z][\w-]{3,15}$").unwrap());
     RE.is_match(alias)
+}
+
+/// Aliases are shown as "name@fd"; the suffix is not part of the alias.
+fn strip_fd_suffix(alias: &str) -> &str {
+    let n = alias.len();
+    if n > 3 && alias.is_char_boundary(n - 3) && alias[n - 3..].eq_ignore_ascii_case("@fd") {
+        &alias[..n - 3]
+    } else {
+        alias
+    }
 }
 
 #[cfg(test)]
 mod fatimadesk_id_tests {
-    use super::{is_valid_fatimadesk_alias, is_valid_fatimadesk_id};
+    use super::{is_valid_fatimadesk_alias, is_valid_fatimadesk_id, strip_fd_suffix};
+
+    #[test]
+    fn fd_suffix() {
+        assert_eq!(strip_fd_suffix("Office-PC@fd"), "Office-PC");
+        assert_eq!(strip_fd_suffix("Office-PC@FD"), "Office-PC");
+        assert_eq!(strip_fd_suffix("Office-PC"), "Office-PC");
+        assert_eq!(strip_fd_suffix("@fd"), "@fd");
+    }
 
     #[test]
     fn id_rules() {
@@ -108,10 +126,10 @@ mod fatimadesk_id_tests {
 
     #[test]
     fn alias_rules() {
-        for ok in ["Laptop-1", "Office_PC", "abcdef", "a23456789012345X", "Home-Desktop-01"] {
+        for ok in ["Laptop-1", "Office_PC", "abcd", "a23456789012345X", "Home-Desktop-01"] {
             assert!(is_valid_fatimadesk_alias(ok), "{ok} should be valid");
         }
-        for bad in ["123456789", "abcde", "1abcdef", "a b cdef", "a2345678901234567", "abc.def", ""] {
+        for bad in ["123456789", "abc", "1abcdef", "a b cdef", "a2345678901234567", "abc.def", "ab@fd", ""] {
             assert!(!is_valid_fatimadesk_alias(bad), "{bad} should be invalid");
         }
     }
@@ -603,8 +621,9 @@ impl RendezvousServer {
                     Self::send_to_sink(sink, msg_out).await;
                 }
                 Some(rendezvous_message::Union::FdAliasRequest(r)) => {
-                    let id = if is_valid_fatimadesk_alias(&r.alias) {
-                        self.pm.resolve_alias(&r.alias).await
+                    let lookup = strip_fd_suffix(&r.alias);
+                    let id = if is_valid_fatimadesk_alias(lookup) {
+                        self.pm.resolve_alias(lookup).await
                     } else {
                         String::new()
                     };
@@ -914,6 +933,16 @@ impl RendezvousServer {
         if rk.id == rk.old_id {
             return OK;
         }
+        // Only the admin chooses IDs: a device may move only to the ID that
+        // was assigned to it in the Console.
+        let assigned = match self.pm.get(&rk.old_id).await {
+            Some(peer) => peer.read().await.pending_id == rk.id,
+            None => false,
+        };
+        if !assigned {
+            log::warn!("change_id: {} -> {} refused: not assigned by the admin", rk.old_id, rk.id);
+            return NOT_SUPPORT;
+        }
         let ip = try_into_v4(addr).ip().to_string();
         {
             let mut last = CHANGE_ID_LAST.lock().await;
@@ -946,7 +975,8 @@ impl RendezvousServer {
         if r.id.is_empty() || r.uuid.is_empty() {
             return UUID_MISMATCH;
         }
-        if !r.alias.is_empty() && !is_valid_fatimadesk_alias(&r.alias) {
+        let alias = strip_fd_suffix(&r.alias).to_owned();
+        if !alias.is_empty() && !is_valid_fatimadesk_alias(&alias) {
             return INVALID_FORMAT;
         }
         let ip = try_into_v4(addr).ip().to_string();
@@ -958,12 +988,12 @@ impl RendezvousServer {
             }
             last.insert(ip.clone(), Instant::now());
         }
-        self.pm.set_alias_owned(&r.id, &r.uuid, &ip, &r.alias).await
+        self.pm.set_alias_owned(&r.id, &r.uuid, &ip, &alias).await
     }
 
     /// Fatima Desk admin command: set or remove ("-") a device's alias.
     async fn admin_set_alias(&self, id: &str, alias: &str) -> String {
-        let alias = if alias == "-" { "" } else { alias };
+        let alias = if alias == "-" { "" } else { strip_fd_suffix(alias) };
         if !alias.is_empty() && !is_valid_fatimadesk_alias(alias) {
             return "ERR invalid alias\n".to_owned();
         }

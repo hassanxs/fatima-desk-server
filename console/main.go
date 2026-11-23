@@ -497,7 +497,7 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 				continue
 			}
 		}
-		if q != "" && !strings.Contains(strings.ToLower(dv.ID+" "+dv.Alias+" "+dv.Name+" "+dv.Note+" "+dv.IP), q) {
+		if q != "" && !strings.Contains(strings.ToLower(dv.ID+" "+dv.Alias+"@fd "+dv.Name+" "+dv.Note+" "+dv.IP), q) {
 			continue
 		}
 		list = append(list, dv)
@@ -530,7 +530,7 @@ func (a *App) deviceMeta(w http.ResponseWriter, r *http.Request, _ session) {
 }
 
 var (
-	aliasRe     = regexp.MustCompile(`^[A-Za-z][0-9A-Za-z_-]{5,15}$`)
+	aliasRe     = regexp.MustCompile(`^[A-Za-z][0-9A-Za-z_-]{3,15}$`)
 	numericIDRe = regexp.MustCompile(`^[1-9][0-9]{8}$`)
 )
 
@@ -545,8 +545,11 @@ func (a *App) deviceAlias(w http.ResponseWriter, r *http.Request, _ session) {
 		return
 	}
 	alias := strings.TrimSpace(r.FormValue("alias"))
+	if len(alias) > 3 && strings.EqualFold(alias[len(alias)-3:], "@fd") {
+		alias = alias[:len(alias)-3]
+	}
 	if alias != "" && !aliasRe.MatchString(alias) {
-		backWithErr(w, r, "An alias starts with a letter and has 6-16 letters, digits, _ or -")
+		backWithErr(w, r, "An alias starts with a letter and has 4-16 letters, digits, _ or -")
 		return
 	}
 	if err := a.rd.SetAlias(id, alias); err != nil {

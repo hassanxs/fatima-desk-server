@@ -276,6 +276,14 @@ impl PeerMap {
                 log::warn!("set_alias: {}: request from {} but device is at {}", id, ip, p.info.ip);
                 return UUID_MISMATCH;
             }
+            // A device picks its alias once; after that only the admin
+            // changes or removes it.
+            if !p.alias.is_empty() {
+                return if p.alias == alias { OK } else { NOT_ALLOWED };
+            }
+            if alias.is_empty() {
+                return OK;
+            }
         }
         self.set_alias(id, &peer, alias).await
     }

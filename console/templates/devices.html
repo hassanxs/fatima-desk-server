@@ -28,7 +28,7 @@
     <tr class="{{if .Hidden}}muted{{end}}">
       <td><span class="dot {{if .Online}}on{{end}}" title="{{if .Online}}Online{{else}}Offline{{end}}"></span></td>
       <td class="mono">{{spaced .ID}}{{if .PendingID}}<br><span class="tag amber" title="Applied when the device next checks in">→ {{spaced .PendingID}} pending</span>{{end}}</td>
-      <td class="mono">{{if .Alias}}{{.Alias}}{{else}}<span class="dim">—</span>{{end}}</td>
+      <td class="mono">{{if .Alias}}{{.Alias}}@fd{{else}}<span class="dim">—</span>{{end}}</td>
       <td>{{if .Name}}{{.Name}}{{else}}<span class="dim">—</span>{{end}}</td>
       <td class="note">{{.Note}}</td>
       <td class="mono">{{.IP}}{{if .Blocked}} <span class="tag red">relay blocked</span>{{end}}</td>
@@ -54,7 +54,7 @@
         </form>
         <form method="post" action="/devices/{{.ID}}/alias" class="inline">
           <input type="hidden" name="csrf" value="{{$.CSRF}}">
-          <label>Alias <input name="alias" value="{{.Alias}}" maxlength="16" pattern="[A-Za-z][0-9A-Za-z_\-]{5,15}" placeholder="e.g. Office-PC" title="Starts with a letter, 6-16 letters, digits, _ or -. Leave empty to remove."></label>
+          <label>Alias (shown as …@fd) <input name="alias" value="{{.Alias}}" maxlength="19" pattern="[A-Za-z][0-9A-Za-z_\-]{3,15}(@[fF][dD])?" placeholder="e.g. Office-PC" title="Starts with a letter, 4-16 letters, digits, _ or -. Leave empty to remove."></label>
           <button type="submit" class="ghost">Save alias</button>
         </form>
         <form method="post" action="/devices/{{.ID}}/assign" class="inline" data-confirm="Change this device's ID? Saved connections to the old ID will stop working.">
@@ -78,5 +78,5 @@
   </tbody>
 </table>
 </div>
-<p class="hint">Online status comes live from the ID server. “Last seen online” is recorded by this Console every 30 seconds, from when it was first started. Hiding a device only hides it here; it can still connect. Either the ID or the alias connects to a device. An assigned ID is applied by the device itself when it next checks in (within about a minute, if it is online); devices on Fatima Desk builds older than the alias update ignore it.</p>
+<p class="hint">Online status comes live from the ID server. “Last seen online” is recorded by this Console every 30 seconds, from when it was first started. Hiding a device only hides it here; it can still connect. Either the ID or the alias (with or without @fd) connects to a device. Only you can change IDs; a device can pick its own alias once, after that only you can change it here. An assigned ID is applied by the device itself when it next checks in (within about a minute, if it is online); devices on Fatima Desk builds older than the alias update ignore it.</p>
 {{end}}
