@@ -30,7 +30,7 @@
       <td class="mono">{{spaced .ID}}{{if .PendingID}}<br><span class="tag amber" title="Applied when the device next checks in">→ {{spaced .PendingID}} pending</span>{{end}}</td>
       <td class="mono">{{if .Alias}}{{.Alias}}@fd{{else}}<span class="dim">—</span>{{end}}</td>
       <td>{{if .Name}}{{.Name}}{{else}}<span class="dim">—</span>{{end}}</td>
-      <td>{{if .Info.Hostname}}<span title="{{.Info.CPU}}, {{.Info.Memory}} memory. Reported {{.Info.Updated}} UTC">{{.Info.Hostname}}</span>{{if .Info.Username}} <span class="sub">· {{.Info.Username}}</span>{{end}}<div class="sub">{{.Info.OS}}{{if .Info.Version}} · app {{.Info.Version}}{{end}}</div>{{else}}<span class="dim" title="This device's app has not reported to the device API yet">—</span>{{end}}</td>
+      <td>{{if .Info.Hostname}}<span title="{{.Info.CPU}}, {{.Info.Memory}} memory. Reported {{.Info.Updated}} UTC">{{.Info.Hostname}}</span>{{if .Info.Username}} <span class="sub">· {{.Info.Username}}</span>{{end}}<div class="sub">{{.Info.OS}}{{if .Info.Version}} · app {{.Info.Version}}{{end}}</div>{{if .Outdated}}<span class="tag amber" title="Older than {{$.NewestVersion}}, the newest version a device reports">update available</span>{{end}}{{else}}<span class="dim" title="This device's app has not reported to the device API yet">—</span>{{end}}</td>
       <td class="note">{{.Note}}</td>
       <td class="mono">{{.IP}}{{if .Blocked}} <span class="tag red">relay blocked</span>{{end}}</td>
       <td>{{if .Online}}<span class="tag green">now</span>{{else if .LastSeen}}{{.LastSeen}} UTC{{else}}<span class="dim">not yet seen</span>{{end}}</td>

@@ -32,6 +32,7 @@ type Device struct {
 	Blocked   bool
 	Info      SysInfo // what the device's app last reported (device API)
 	Reporting bool    // the app has sent a heartbeat recently
+	Outdated  bool    // reports an older app than the newest any device reports
 }
 
 type ConnRow struct {

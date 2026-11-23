@@ -530,6 +530,7 @@ func (a *App) devicesPage(w http.ResponseWriter, r *http.Request, sess session) 
 		list = append(list, dv)
 	}
 	_ = a.store.MarkSeen(seen)
+	d["NewestVersion"] = markOutdated(list)
 	sort.SliceStable(list, func(i, j int) bool {
 		if list[i].Online != list[j].Online {
 			return list[i].Online
